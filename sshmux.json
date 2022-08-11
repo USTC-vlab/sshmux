@@ -1,0 +1,13 @@
+{
+    "address": "127.0.0.1:8022",
+    "host-keys": [
+        "ssh_host_ed25519_key",
+        "ssh_host_ecdsa_key",
+        "ssh_host_rsa_key"
+    ],
+    "api": "http://localhost:5000/ssh",
+    "token": "token",
+    "recovery-server": "127.0.0.1:22",
+    "recovery-username": ["console", "recovery"],
+    "username-nopassword": ["vlab", "ubuntu", "root"]
+}
