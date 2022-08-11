@@ -17,15 +17,16 @@ import (
 )
 
 type Config struct {
-	Address            string   `json:"address"`
-	HostKeys           []string `json:"host-keys"`
-	API                string   `json:"api"`
-	Token              string   `json:"token"`
-	RecoveryServer     string   `json:"recovery-server"`
-	RecoveryUsername   []string `json:"recovery-username"`
-	UsernameNoPassword []string `json:"username-nopassword"`
-	Logger             string   `json:"logger"`
-	Banner             string   `json:"banner"`
+	Address               string   `json:"address"`
+	HostKeys              []string `json:"host-keys"`
+	API                   string   `json:"api"`
+	Token                 string   `json:"token"`
+	RecoveryServer        string   `json:"recovery-server"`
+	RecoveryUsername      []string `json:"recovery-username"`
+	AllUsernameNoPassword bool     `json:"all-username-nopassword"`
+	UsernameNoPassword    []string `json:"username-nopassword"`
+	Logger                string   `json:"logger"`
+	Banner                string   `json:"banner"`
 }
 
 type LogMessage struct {
@@ -207,7 +208,8 @@ func handshake(session *ssh.PipeSession) error {
 			}
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "keyboard-interactive" {
-			requireUnixPassword := !isStringInArray(user, config.RecoveryUsername) &&
+			requireUnixPassword := !config.AllUsernameNoPassword &&
+				!isStringInArray(user, config.RecoveryUsername) &&
 				!isStringInArray(user, config.UsernameNoPassword)
 			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 			interactiveEcho := []bool{true, false}
