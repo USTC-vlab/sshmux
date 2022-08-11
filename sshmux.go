@@ -320,18 +320,27 @@ func runPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
 	return session.RunPipe()
 }
 
-func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession) {
-	session.Close()
+func runLogger(ch <-chan LogMessage) {
 	conn, err := net.Dial("udp", config.Logger)
 	if err != nil {
-		return
+		log.Printf("Logger Dial failed: %s\n", err)
+		// Drain the channel to avoid blocking
+		for range ch {
+		}
 	}
+	for logMessage := range ch {
+		jsonMsg, err := json.Marshal(logMessage)
+		if err != nil {
+			continue
+		}
+		conn.Write(jsonMsg)
+	}
+}
+
+func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh chan<- LogMessage) {
+	session.Close()
 	logMessage.DisconnectTime = time.Now().Unix()
-	jsonMsg, err := json.Marshal(logMessage)
-	if err != nil {
-		return
-	}
-	conn.Write(jsonMsg)
+	logCh <- *logMessage
 }
 
 func main() {
@@ -362,9 +371,12 @@ func main() {
 		log.Fatal(err)
 	}
 	defer listener.Close()
+	logCh := make(chan LogMessage, 256)
+	go runLogger(logCh)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			log.Printf("Error on Accept: %s\n", err)
 			continue
 		}
 		go func() {
@@ -376,7 +388,7 @@ func main() {
 			if err != nil {
 				return
 			}
-			defer sendLogAndClose(&logMessage, session)
+			defer sendLogAndClose(&logMessage, session, logCh)
 			runPipeSession(session, &logMessage)
 		}()
 	}
