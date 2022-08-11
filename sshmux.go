@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -23,6 +24,15 @@ type Config struct {
 	RecoveryServer     string   `json:"recovery-server"`
 	RecoveryUsername   []string `json:"recovery-username"`
 	UsernameNoPassword []string `json:"username-nopassword"`
+	Logger             string   `json:"logger"`
+}
+
+type LogMessage struct {
+	LoginTime      int64  `json:"login_time"`
+	DisconnectTime int64  `json:"disconnect_time"`
+	ClientIp       string `json:"remote_ip"`
+	HostIp         string `json:"host_ip"`
+	Username       string `json:"user_name"`
 }
 
 var configFile string
@@ -98,6 +108,8 @@ func authUser(request []byte, username string) (*UpstreamInformation, error) {
 	var upstream UpstreamInformation
 	if isStringInArray(username, config.RecoveryUsername) {
 		upstream.Host = config.RecoveryServer
+		password := fmt.Sprintf("%d %s", response.Id, config.Token)
+		upstream.Password = &password
 	} else {
 		upstream.Host = response.Address
 	}
@@ -213,7 +225,7 @@ func handshake(session *ssh.PipeSession) error {
 				return err
 			}
 			if upstream != nil {
-				if !requireUnixPassword {
+				if requireUnixPassword {
 					upstream.Password = &answers[2]
 				}
 				break
@@ -293,12 +305,28 @@ func handshake(session *ssh.PipeSession) error {
 	}
 }
 
-func runPipeSession(session *ssh.PipeSession) error {
+func runPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
 	err := handshake(session)
 	if err != nil {
 		return err
 	}
+	logMessage.Username = session.Downstream.User()
+	logMessage.HostIp = session.Upstream.RemoteAddr().String()
 	return session.RunPipe()
+}
+
+func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession) {
+	session.Close()
+	conn, err := net.Dial("udp", config.Logger)
+	if err != nil {
+		return
+	}
+	logMessage.DisconnectTime = time.Now().Unix()
+	jsonMsg, err := json.Marshal(logMessage)
+	if err != nil {
+		return
+	}
+	conn.Write(jsonMsg)
 }
 
 func main() {
@@ -335,11 +363,15 @@ func main() {
 		}
 		go func() {
 			session, err := ssh.NewPipeSession(conn, sshConfig)
+			logMessage := LogMessage{
+				LoginTime: time.Now().Unix(),
+				ClientIp:  conn.RemoteAddr().String(),
+			}
 			if err != nil {
 				return
 			}
-			defer session.Close()
-			runPipeSession(session)
+			defer sendLogAndClose(&logMessage, session)
+			runPipeSession(session, &logMessage)
 		}()
 	}
 }
