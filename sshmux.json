@@ -10,5 +10,6 @@
     "recovery-server": "127.0.0.1:22",
     "recovery-username": ["console", "recovery"],
     "username-nopassword": ["vlab", "ubuntu", "root"],
-    "logger": "127.0.0.1:5556"
+    "logger": "127.0.0.1:5556",
+    "banner": "welcome\n"
 }

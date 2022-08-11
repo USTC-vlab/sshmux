@@ -225,7 +225,7 @@ func (s *Downstream) WriteAuthResult(res *AuthResult) error {
 }
 
 func (s *Downstream) WriteAuthFailure(methods []string, partialSuccess bool) error {
-	return s.transport.writePacket(Marshal(userAuthFailureMsg{
+	return s.transport.writePacket(Marshal(&userAuthFailureMsg{
 		Methods:        methods,
 		PartialSuccess: partialSuccess,
 	}))
@@ -239,6 +239,12 @@ func (s *Downstream) InteractiveChallenge(name string, instruction string,
 
 func (s *Downstream) SetUser(user string) {
 	s.user = user
+}
+
+func (s *Downstream) SendBanner(banner string) error {
+	return s.transport.writePacket(Marshal(&userAuthBannerMsg{
+		Message: banner,
+	}))
 }
 
 func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error {

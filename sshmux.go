@@ -25,6 +25,7 @@ type Config struct {
 	RecoveryUsername   []string `json:"recovery-username"`
 	UsernameNoPassword []string `json:"username-nopassword"`
 	Logger             string   `json:"logger"`
+	Banner             string   `json:"banner"`
 }
 
 type LogMessage struct {
@@ -177,6 +178,12 @@ func handshake(session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
 	var upstream *UpstreamInformation
+	if config.Banner != "" {
+		err := session.Downstream.SendBanner(config.Banner)
+		if err != nil {
+			return err
+		}
+	}
 	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
 	for {
 		req, err := session.Downstream.ReadAuthRequest(true)
