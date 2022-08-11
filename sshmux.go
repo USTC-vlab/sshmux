@@ -40,10 +40,6 @@ type LogMessage struct {
 var configFile string
 var config Config
 
-func init() {
-	flag.StringVar(&configFile, "c", "/etc/sshmux.json", "config file")
-}
-
 type UpstreamInformation struct {
 	Host     string
 	Signer   ssh.Signer
@@ -92,7 +88,7 @@ func authUser(request []byte, username string) (*UpstreamInformation, error) {
 		return nil, err
 	}
 	type Response struct {
-		Status     string `json:"status`
+		Status     string `json:"status"`
 		Address    string `json:"address"`
 		PrivateKey string `json:"private_key"`
 		Cert       string `json:"cert"`
@@ -339,6 +335,7 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession) {
 }
 
 func main() {
+	flag.StringVar(&configFile, "c", "/etc/sshmux.json", "config file")
 	flag.Parse()
 	configFile, err := ioutil.ReadFile(configFile)
 	if err != nil {
