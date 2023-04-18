@@ -191,8 +191,10 @@ func handshake(session *ssh.PipeSession) error {
 			hasSetUser = true
 		}
 		if isStringInArray(user, config.InvalidUsername) {
-			// TODO: fail with config.InvalidUsernameMessage?
-			return nil
+			// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
+			msg := fmt.Sprintf(config.InvalidUsernameMessage, user)
+			session.Downstream.WriteDisconnectMsg(15, msg)
+			return fmt.Errorf("ssh: invalid username")
 		}
 		if req.Method == "none" {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)

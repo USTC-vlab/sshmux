@@ -234,6 +234,13 @@ func (s *Downstream) SendBanner(banner string) error {
 	}))
 }
 
+func (s *Downstream) WriteDisconnectMsg(reason uint32, msg string) error {
+	return s.transport.writePacket(Marshal(&disconnectMsg{
+		Reason:  reason,
+		Message: msg,
+	}))
+}
+
 func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error {
 	// BEGIN (*connection).clientHandshake
 	if config.ClientVersion != "" {
