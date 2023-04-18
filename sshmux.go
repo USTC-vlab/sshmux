@@ -17,16 +17,18 @@ import (
 )
 
 type Config struct {
-	Address               string   `json:"address"`
-	HostKeys              []string `json:"host-keys"`
-	API                   string   `json:"api"`
-	Token                 string   `json:"token"`
-	RecoveryServer        string   `json:"recovery-server"`
-	RecoveryUsername      []string `json:"recovery-username"`
-	AllUsernameNoPassword bool     `json:"all-username-nopassword"`
-	UsernameNoPassword    []string `json:"username-nopassword"`
-	Logger                string   `json:"logger"`
-	Banner                string   `json:"banner"`
+	Address                string   `json:"address"`
+	HostKeys               []string `json:"host-keys"`
+	API                    string   `json:"api"`
+	Token                  string   `json:"token"`
+	RecoveryServer         string   `json:"recovery-server"`
+	RecoveryUsername       []string `json:"recovery-username"`
+	AllUsernameNoPassword  bool     `json:"all-username-nopassword"`
+	UsernameNoPassword     []string `json:"username-nopassword"`
+	InvalidUsername        []string `json:"invalid-username"`
+	InvalidUsernameMessage string   `json:"invalid-username-message"`
+	Logger                 string   `json:"logger"`
+	Banner                 string   `json:"banner"`
 }
 
 type LogMessage struct {
@@ -187,6 +189,10 @@ func handshake(session *ssh.PipeSession) error {
 			user = req.User
 			session.Downstream.SetUser(user)
 			hasSetUser = true
+		}
+		if isStringInArray(user, config.InvalidUsername) {
+			// TODO: fail with config.InvalidUsernameMessage?
+			return nil
 		}
 		if req.Method == "none" {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
