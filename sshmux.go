@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -77,13 +77,17 @@ func isStringInArray(str string, arr []string) bool {
 	return false
 }
 
-func authUser(request []byte, username string) (*UpstreamInformation, error) {
-	res, err := http.Post(config.API, "application/json", bytes.NewBuffer(request))
+func authUser(request any, username string) (*UpstreamInformation, error) {
+	payload := new(bytes.Buffer)
+	if err := json.NewEncoder(payload).Encode(request); err != nil {
+		return nil, err
+	}
+	res, err := http.Post(config.API, "application/json", payload)
 	if err != nil {
 		return nil, err
 	}
 	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +136,7 @@ func authUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInf
 		PublicKeyData: keyData,
 		Token:         config.Token,
 	}
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	return authUser(jsonData, unixUsername)
+	return authUser(request, unixUsername)
 }
 
 func authUserWithUserPass(username string, password string, unixUsername string) (*UpstreamInformation, error) {
@@ -154,11 +154,7 @@ func authUserWithUserPass(username string, password string, unixUsername string)
 		UnixUsername: unixUsername,
 		Token:        config.Token,
 	}
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	return authUser(jsonData, unixUsername)
+	return authUser(request, unixUsername)
 }
 
 func removePublicKeyMethod(methods []string) []string {
@@ -209,13 +205,9 @@ func handshake(session *ssh.PipeSession) error {
 				!isStringInArray(user, config.UsernameNoPassword)
 			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 			interactiveEcho := []bool{true, false}
-			if requireUnixPassword {
-				interactiveQuestions = append(interactiveQuestions, "UNIX password: ")
-				interactiveEcho = append(interactiveEcho, false)
-			}
 
 			answers, err := session.Downstream.InteractiveChallenge("",
-				"Please enter Vlab username & password and UNIX password.",
+				"Please enter Vlab username & password.",
 				interactiveQuestions, interactiveEcho)
 			if err != nil {
 				return err
@@ -231,7 +223,16 @@ func handshake(session *ssh.PipeSession) error {
 			}
 			if upstream != nil {
 				if requireUnixPassword {
-					upstream.Password = &answers[2]
+					answers, err := session.Downstream.InteractiveChallenge("",
+						"Please enter UNIX password.",
+						[]string{"UNIX password: "}, []bool{false})
+					if err != nil {
+						return err
+					}
+					if len(answers) != 1 {
+						return fmt.Errorf("ssh: expected UNIX password")
+					}
+					upstream.Password = &answers[0]
 				}
 				break
 			}
@@ -344,9 +345,9 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh cha
 }
 
 func main() {
-	flag.StringVar(&configFile, "c", "/etc/sshmux.json", "config file")
+	flag.StringVar(&configFile, "c", "/etc/sshmux/config.json", "config file")
 	flag.Parse()
-	configFile, err := ioutil.ReadFile(configFile)
+	configFile, err := os.ReadFile(configFile)
 	if err != nil {
 		log.Fatal(err)
 	}

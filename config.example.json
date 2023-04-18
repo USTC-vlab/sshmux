@@ -1,16 +1,16 @@
 {
-    "address": "127.0.0.1:8022",
+    "address": "0.0.0.0:8022",
     "host-keys": [
-        "ssh_host_ed25519_key",
-        "ssh_host_ecdsa_key",
-        "ssh_host_rsa_key"
+        "/etc/sshmux/ssh_host_ed25519_key",
+        "/etc/sshmux/ssh_host_ecdsa_key",
+        "/etc/sshmux/ssh_host_rsa_key"
     ],
-    "api": "http://localhost:5000/ssh",
+    "api": "http://127.0.0.1:5000/ssh",
     "token": "token",
-    "recovery-server": "127.0.0.1:22",
-    "recovery-username": ["console", "recovery"],
+    "recovery-server": "172.30.0.101:2222",
+    "recovery-username": ["recovery", "console", "serial"],
     "all-username-nopassword": true,
     "username-nopassword": ["vlab", "ubuntu", "root"],
     "logger": "127.0.0.1:5556",
-    "banner": "welcome\n"
+    "banner": "Welcome to Vlab\n"
 }

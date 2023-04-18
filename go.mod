@@ -1,4 +1,4 @@
-module sshmux
+module github.com/USTC-vlab/sshmux
 
 go 1.19
 
