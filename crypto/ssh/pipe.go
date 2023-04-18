@@ -89,22 +89,9 @@ func (s *Downstream) handshakeBeforeAuth(config *ServerConfig) (*Permissions, er
 	// We just did the key change, so the session ID is established.
 	s.sessionID = s.transport.getSessionID()
 
-	// the client could send a SSH_MSG_EXT_INFO after the first SSH_MSG_NEWKEYS
-	// and so before SSH_MSG_SERVICE_REQUEST. See RFC 8308, Section 2.4.
 	var packet []byte
 	if packet, err = s.transport.readPacket(); err != nil {
 		return nil, err
-	}
-
-	if len(packet) > 0 && packet[0] == msgExtInfo {
-		// read SSH_MSG_EXT_INFO
-		if _, err := parseExtInfoMsg(packet); err != nil {
-			return nil, err
-		}
-		// read the next packet
-		if packet, err = s.transport.readPacket(); err != nil {
-			return nil, err
-		}
 	}
 
 	var serviceRequest serviceRequestMsg
@@ -248,6 +235,7 @@ func (s *Downstream) SendBanner(banner string) error {
 }
 
 func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error {
+	// BEGIN (*connection).clientHandshake
 	if config.ClientVersion != "" {
 		c.clientVersion = []byte(config.ClientVersion)
 	} else {
@@ -268,6 +256,7 @@ func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error 
 
 	c.sessionID = c.transport.getSessionID()
 
+	// BEGIN (*connection).clientAuthenticate
 	// initiate user auth session
 	if err := c.transport.writePacket(Marshal(&serviceRequestMsg{serviceUserAuth})); err != nil {
 		return err
@@ -281,9 +270,22 @@ func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error 
 	// RFC 8308, Section 2.4.
 	extensions := make(map[string][]byte)
 	if len(packet) > 0 && packet[0] == msgExtInfo {
-		extensions, err = parseExtInfoMsg(packet)
-		if err != nil {
+		var extInfo extInfoMsg
+		if err := Unmarshal(packet, &extInfo); err != nil {
 			return err
+		}
+		payload := extInfo.Payload
+		for i := uint32(0); i < extInfo.NumExtensions; i++ {
+			name, rest, ok := parseString(payload)
+			if !ok {
+				return parseError(msgExtInfo)
+			}
+			value, rest, ok := parseString(rest)
+			if !ok {
+				return parseError(msgExtInfo)
+			}
+			extensions[string(name)] = value
+			payload = rest
 		}
 		packet, err = c.transport.readPacket()
 		if err != nil {
@@ -294,6 +296,9 @@ func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error 
 	if err := Unmarshal(packet, &serviceAccept); err != nil {
 		return err
 	}
+	// END (*connection).clientAuthenticate
+	// END (*connection).clientHandshake
+
 	c.extensions = extensions
 	return nil
 }
@@ -444,4 +449,14 @@ func (s *PipeSession) RunPipe() error {
 		c <- pipe(s.Upstream.transport, s.Downstream.transport)
 	}()
 	return <-c
+}
+
+func isAcceptableAlgo(algo string) bool {
+	switch algo {
+	case KeyAlgoRSA, KeyAlgoRSASHA256, KeyAlgoRSASHA512, KeyAlgoDSA, KeyAlgoECDSA256, KeyAlgoECDSA384, KeyAlgoECDSA521, KeyAlgoSKECDSA256, KeyAlgoED25519, KeyAlgoSKED25519,
+		CertAlgoRSAv01, CertAlgoDSAv01, CertAlgoECDSA256v01, CertAlgoECDSA384v01, CertAlgoECDSA521v01, CertAlgoSKECDSA256v01, CertAlgoED25519v01, CertAlgoSKED25519v01,
+		CertAlgoRSASHA256v01, CertAlgoRSASHA512v01:
+		return true
+	}
+	return false
 }
