@@ -45,3 +45,4 @@ jobs:
         files: |
           sshmux
           config.example.json
+          sshmux.service
