@@ -363,7 +363,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	sshConfig := &ssh.ServerConfig{}
+	// Disabling chacha20Poly1305ID to workaround Terrapin attack (https://terrapin-attack.com/)
+	ciphers := []string{
+		"aes128-gcm@openssh.com", "aes256-gcm@openssh.com",
+		"aes128-ctr", "aes192-ctr", "aes256-ctr",
+	}
+	sshConfig := &ssh.ServerConfig{
+		Config: ssh.Config{
+			Ciphers: ciphers,
+		},
+	}
 	for _, keyFile := range config.HostKeys {
 		bytes, err := os.ReadFile(keyFile)
 		if err != nil {
