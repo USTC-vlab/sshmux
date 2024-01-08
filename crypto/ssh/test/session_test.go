@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !windows && !solaris && !js
-// +build !windows,!solaris,!js
+//go:build !windows && !js && !wasip1
 
 package test
 
@@ -14,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -21,14 +22,21 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func skipIfIssue64959(t *testing.T, err error) {
+	if err != nil && runtime.GOOS == "darwin" && strings.Contains(err.Error(), "ssh: unexpected packet in response to channel open: <nil>") {
+		t.Helper()
+		t.Skipf("skipping test broken on some versions of macOS; see https://go.dev/issue/64959")
+	}
+}
+
 func TestRunCommandSuccess(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	defer session.Close()
@@ -40,7 +48,6 @@ func TestRunCommandSuccess(t *testing.T) {
 
 func TestHostKeyCheck(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 
 	conf := clientConfig()
 	hostDB := hostKeyDB()
@@ -62,12 +69,12 @@ func TestHostKeyCheck(t *testing.T) {
 
 func TestRunCommandStdin(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	defer session.Close()
@@ -85,12 +92,12 @@ func TestRunCommandStdin(t *testing.T) {
 
 func TestRunCommandStdinError(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	defer session.Close()
@@ -109,12 +116,12 @@ func TestRunCommandStdinError(t *testing.T) {
 
 func TestRunCommandFailed(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	defer session.Close()
@@ -126,12 +133,12 @@ func TestRunCommandFailed(t *testing.T) {
 
 func TestRunCommandWeClosed(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	err = session.Shell()
@@ -146,12 +153,12 @@ func TestRunCommandWeClosed(t *testing.T) {
 
 func TestFuncLargeRead(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("unable to create new session: %s", err)
 	}
 
@@ -178,7 +185,6 @@ func TestFuncLargeRead(t *testing.T) {
 
 func TestKeyChange(t *testing.T) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conf := clientConfig()
 	hostDB := hostKeyDB()
 	conf.HostKeyCallback = hostDB.Check
@@ -189,6 +195,7 @@ func TestKeyChange(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		session, err := conn.NewSession()
 		if err != nil {
+			skipIfIssue64959(t, err)
 			t.Fatalf("unable to create new session: %s", err)
 		}
 
@@ -225,12 +232,12 @@ func TestValidTerminalMode(t *testing.T) {
 		t.Skipf("skipping on %s", runtime.GOOS)
 	}
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	defer session.Close()
@@ -255,15 +262,31 @@ func TestValidTerminalMode(t *testing.T) {
 		t.Fatalf("session failed: %s", err)
 	}
 
-	stdin.Write([]byte("stty -a && exit\n"))
+	if _, err := io.WriteString(stdin, "echo && echo SHELL $SHELL && stty -a && exit\n"); err != nil {
+		t.Fatal(err)
+	}
 
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, stdout); err != nil {
+	buf := new(strings.Builder)
+	if _, err := io.Copy(buf, stdout); err != nil {
 		t.Fatalf("reading failed: %s", err)
 	}
 
+	if testing.Verbose() {
+		t.Logf("echo && echo SHELL $SHELL && stty -a && exit:\n%s", buf)
+	}
+
+	shellLine := regexp.MustCompile("(?m)^SHELL (.*)$").FindStringSubmatch(buf.String())
+	if len(shellLine) != 2 {
+		t.Fatalf("missing output from echo SHELL $SHELL")
+	}
+	switch shell := filepath.Base(strings.TrimSpace(shellLine[1])); shell {
+	case "sh", "bash":
+	default:
+		t.Skipf("skipping test on non-Bourne shell %q", shell)
+	}
+
 	if sttyOutput := buf.String(); !strings.Contains(sttyOutput, "-echo ") {
-		t.Fatalf("terminal mode failure: expected -echo in stty output, got %s", sttyOutput)
+		t.Fatal("terminal mode failure: expected -echo in stty output")
 	}
 }
 
@@ -274,12 +297,12 @@ func TestWindowChange(t *testing.T) {
 		t.Skipf("skipping on %s", runtime.GOOS)
 	}
 	server := newServer(t)
-	defer server.Shutdown()
 	conn := server.Dial(clientConfig())
 	defer conn.Close()
 
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("session failed: %v", err)
 	}
 	defer session.Close()
@@ -322,7 +345,6 @@ func TestWindowChange(t *testing.T) {
 
 func testOneCipher(t *testing.T, cipher string, cipherOrder []string) {
 	server := newServer(t)
-	defer server.Shutdown()
 	conf := clientConfig()
 	conf.Ciphers = []string{cipher}
 	// Don't fail if sshd doesn't have the cipher.
@@ -343,6 +365,7 @@ func testOneCipher(t *testing.T, cipher string, cipherOrder []string) {
 	// Exercise receiving data from the server
 	session, err := conn.NewSession()
 	if err != nil {
+		skipIfIssue64959(t, err)
 		t.Fatalf("NewSession: %v", err)
 	}
 
@@ -381,7 +404,6 @@ func TestMACs(t *testing.T) {
 	for _, mac := range macOrder {
 		t.Run(mac, func(t *testing.T) {
 			server := newServer(t)
-			defer server.Shutdown()
 			conf := clientConfig()
 			conf.MACs = []string{mac}
 			// Don't fail if sshd doesn't have the MAC.
@@ -404,10 +426,12 @@ func TestKeyExchanges(t *testing.T) {
 	// are not included in the default list of supported kex so we have to add them
 	// here manually.
 	kexOrder = append(kexOrder, "diffie-hellman-group-exchange-sha1", "diffie-hellman-group-exchange-sha256")
+	// The key exchange algorithms diffie-hellman-group16-sha512 is disabled by
+	// default so we add it here manually.
+	kexOrder = append(kexOrder, "diffie-hellman-group16-sha512")
 	for _, kex := range kexOrder {
 		t.Run(kex, func(t *testing.T) {
 			server := newServer(t)
-			defer server.Shutdown()
 			conf := clientConfig()
 			// Don't fail if sshd doesn't have the kex.
 			conf.KeyExchanges = append([]string{kex}, kexOrder...)
@@ -442,8 +466,6 @@ func TestClientAuthAlgorithms(t *testing.T) {
 			} else {
 				t.Errorf("failed for key %q", key)
 			}
-
-			server.Shutdown()
 		})
 	}
 }

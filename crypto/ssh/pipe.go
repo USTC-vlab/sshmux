@@ -350,7 +350,10 @@ func (c *Upstream) WriteAuthRequestPublicKey(user string, signer Signer) error {
 	session := c.transport.getSessionID()
 
 	pub := signer.PublicKey()
-	as, algo := pickSignatureAlgorithm(signer, c.extensions)
+	as, algo, err := pickSignatureAlgorithm(signer, c.extensions)
+	if err != nil {
+		return err
+	}
 
 	pubKey := pub.Marshal()
 	data := buildDataSignedForAuth(session, userAuthRequestMsg{
