@@ -41,19 +41,13 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type Response struct {
-		Status     string `json:"status"`
-		Address    string `json:"address"`
-		PrivateKey string `json:"private_key"`
-		Cert       string `json:"cert"`
-		Id         int    `json:"vmid"`
+	res := &AuthResponse{
+		Status:     "ok",
+		Address:    "localhost:2333",
+		Id:         1141919,
+		Cert:       "",
+		PrivateKey: examplePrivate,
 	}
-	var res Response
-	res.Status = "ok"
-	res.Address = "localhost:2333"
-	res.Id = 1141919
-	res.Cert = ""
-	res.PrivateKey = examplePrivate
 	jsonRes, err := json.Marshal(res)
 	if err != nil {
 		http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
@@ -93,7 +87,11 @@ func initEnv() {
 }
 
 func startOnetimeSSHDServer() {
-	err := exec.Command("/usr/bin/sshd", "-h", "/tmp/sshmux/ssh_host_ed25519_key", "-p", "2333", "-d", "-o", "AuthorizedKeysFile=/tmp/sshmux/example_rsa.pub", "-o", "StrictModes=no").Run()
+	sshdPath, err := exec.LookPath("sshd")
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = exec.Command(sshdPath, "-h", "/tmp/sshmux/ssh_host_ed25519_key", "-p", "2333", "-d", "-o", "AuthorizedKeysFile=/tmp/sshmux/example_rsa.pub", "-o", "StrictModes=no").Run()
 	if err != nil {
 		log.Println("sshd: ", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -42,6 +43,30 @@ type LogMessage struct {
 var configFile string
 var config Config
 
+type AuthRequestPublicKey struct {
+	AuthType      string `json:"auth_type"`
+	UnixUsername  string `json:"unix_username"`
+	PublicKeyType string `json:"public_key_type"`
+	PublicKeyData string `json:"public_key_data"`
+	Token         string `json:"token"`
+}
+
+type AuthRequestPassword struct {
+	AuthType     string `json:"auth_type"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	UnixUsername string `json:"unix_username"`
+	Token        string `json:"token"`
+}
+
+type AuthResponse struct {
+	Status     string `json:"status"`
+	Address    string `json:"address"`
+	PrivateKey string `json:"private_key"`
+	Cert       string `json:"cert"`
+	Id         int    `json:"vmid"`
+}
+
 type UpstreamInformation struct {
 	Host     string
 	Signer   ssh.Signer
@@ -70,15 +95,6 @@ func parsePrivateKey(key string, cert string) ssh.Signer {
 	return certSigner
 }
 
-func isStringInArray(str string, arr []string) bool {
-	for _, s := range arr {
-		if s == str {
-			return true
-		}
-	}
-	return false
-}
-
 func authUser(request any, username string) (*UpstreamInformation, error) {
 	payload := new(bytes.Buffer)
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
@@ -93,14 +109,7 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 	if err != nil {
 		return nil, err
 	}
-	type Response struct {
-		Status     string `json:"status"`
-		Address    string `json:"address"`
-		PrivateKey string `json:"private_key"`
-		Cert       string `json:"cert"`
-		Id         int    `json:"vmid"`
-	}
-	var response Response
+	var response AuthResponse
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		return nil, err
@@ -110,7 +119,7 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 	}
 
 	var upstream UpstreamInformation
-	if isStringInArray(username, config.RecoveryUsername) {
+	if slices.Contains(config.RecoveryUsername, username) {
 		upstream.Host = config.RecoveryServer
 		password := fmt.Sprintf("%d %s", response.Id, config.Token)
 		upstream.Password = &password
@@ -124,14 +133,7 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 func authUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInformation, error) {
 	keyType := key.Type()
 	keyData := base64.StdEncoding.EncodeToString(key.Marshal())
-	type Request struct {
-		AuthType      string `json:"auth_type"`
-		UnixUsername  string `json:"unix_username"`
-		PublicKeyType string `json:"public_key_type"`
-		PublicKeyData string `json:"public_key_data"`
-		Token         string `json:"token"`
-	}
-	request := Request{
+	request := &AuthRequestPublicKey{
 		AuthType:      "key",
 		UnixUsername:  unixUsername,
 		PublicKeyType: keyType,
@@ -142,14 +144,7 @@ func authUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInf
 }
 
 func authUserWithUserPass(username string, password string, unixUsername string) (*UpstreamInformation, error) {
-	type Request struct {
-		AuthType     string `json:"auth_type"`
-		Username     string `json:"username"`
-		Password     string `json:"password"`
-		UnixUsername string `json:"unix_username"`
-		Token        string `json:"token"`
-	}
-	request := Request{
+	request := &AuthRequestPassword{
 		AuthType:     "key",
 		Username:     username,
 		Password:     password,
@@ -190,7 +185,7 @@ func handshake(session *ssh.PipeSession) error {
 			session.Downstream.SetUser(user)
 			hasSetUser = true
 		}
-		if isStringInArray(user, config.InvalidUsername) {
+		if slices.Contains(config.InvalidUsername, user) {
 			// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
 			msg := fmt.Sprintf(config.InvalidUsernameMessage, user)
 			session.Downstream.WriteDisconnectMsg(15, msg)
@@ -209,8 +204,8 @@ func handshake(session *ssh.PipeSession) error {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "keyboard-interactive" {
 			requireUnixPassword := !config.AllUsernameNoPassword &&
-				!isStringInArray(user, config.RecoveryUsername) &&
-				!isStringInArray(user, config.UsernameNoPassword)
+				!slices.Contains(config.RecoveryUsername, user) &&
+				!slices.Contains(config.UsernameNoPassword, user)
 			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 			interactiveEcho := []bool{true, false}
 
