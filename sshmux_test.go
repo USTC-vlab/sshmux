@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -43,7 +44,7 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 
 	res := &AuthResponse{
 		Status:     "ok",
-		Address:    "localhost:2333",
+		Address:    "127.0.0.1:2333",
 		Id:         1141919,
 		Cert:       "",
 		PrivateKey: examplePrivate,
@@ -65,20 +66,22 @@ func initHttp() {
 	}
 }
 
-func initEnv() {
+func initEnv(t *testing.T) {
 	// Create /etc/sshmux/ssh_host_*_key
-	err := os.MkdirAll("/tmp/sshmux", 0o755)
+	baseDir := "/tmp/sshmux"
+	err := os.MkdirAll(baseDir, 0o755)
 	if err != nil {
 		log.Fatal(err)
 	}
-	mustGenerateKey("/tmp/sshmux/ssh_host_rsa_key", "rsa")
-	mustGenerateKey("/tmp/sshmux/ssh_host_ecdsa_key", "ecdsa")
-	mustGenerateKey("/tmp/sshmux/ssh_host_ed25519_key", "ed25519")
+	mustGenerateKey(filepath.Join(baseDir, "ssh_host_rsa_key"), "rsa")
+	mustGenerateKey(filepath.Join(baseDir, "ssh_host_ecdsa_key"), "ecdsa")
+	mustGenerateKey(filepath.Join(baseDir, "ssh_host_ed25519_key"), "ed25519")
 
-	mustGenerateKey("/tmp/sshmux/example_rsa", "rsa")
-	examplePrivateBytes, err := os.ReadFile("/tmp/sshmux/example_rsa")
+	examplePrivatePath := filepath.Join(baseDir, "example_rsa")
+	mustGenerateKey(examplePrivatePath, "rsa")
+	examplePrivateBytes, err := os.ReadFile(examplePrivatePath)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	examplePrivate = string(examplePrivateBytes)
 
@@ -98,15 +101,15 @@ func startOnetimeSSHDServer() {
 }
 
 func TestSSHClientConnection(t *testing.T) {
-	initEnv()
-	go mainInside("./config.example.json")
+	initEnv(t)
+	go sshmuxServer("config.example.json")
 
 	// Sanity check
 	go startOnetimeSSHDServer()
 	time.Sleep(2 * time.Second)
 	err := exec.Command("ssh", "-p", "2333", "-o", "StrictHostKeyChecking=no", "-o", "ControlMaster=no", "-i", "/tmp/sshmux/example_rsa", "-o", "IdentityAgent=no", "localhost", "uname").Run()
 	if err != nil {
-		log.Fatal("ssh: ", err)
+		t.Fatal("ssh: ", err)
 	}
 
 	time.Sleep(2 * time.Second)
@@ -114,6 +117,6 @@ func TestSSHClientConnection(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	err = exec.Command("ssh", "-p", "8022", "-o", "StrictHostKeyChecking=no", "-o", "ControlMaster=no", "-i", "/tmp/sshmux/example_rsa", "-o", "IdentityAgent=no", "localhost", "uname").Run()
 	if err != nil {
-		log.Fatal("ssh2: ", err)
+		t.Fatal("ssh2: ", err)
 	}
 }
