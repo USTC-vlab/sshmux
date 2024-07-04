@@ -23,7 +23,11 @@ jobs:
             dep ensure
         fi
     - name: Build
-      run: go build -v .
+      run: make
+      env:
+        CGO_ENABLED: 0
+    - name: Test
+      run: make test
       env:
         CGO_ENABLED: 0
     - name: Create GitHub Release
