@@ -699,17 +699,17 @@ func (t *handshakeTransport) enterKeyExchange(otherInitPacket []byte) error {
 	if !isClient && firstKeyExchange && contains(clientInit.KexAlgos, "ext-info-c") {
 		supportedPubKeyAuthAlgosList := strings.Join(t.publicKeyAuthAlgorithms, ",")
 		extInfo := &extInfoMsg{
-			NumExtensions: 2,
+			NumExtensions: 1,
 			Payload:       make([]byte, 0, 4+15+4+len(supportedPubKeyAuthAlgosList)+4+16+4+1),
 		}
 		extInfo.Payload = appendInt(extInfo.Payload, len("server-sig-algs"))
 		extInfo.Payload = append(extInfo.Payload, "server-sig-algs"...)
 		extInfo.Payload = appendInt(extInfo.Payload, len(supportedPubKeyAuthAlgosList))
 		extInfo.Payload = append(extInfo.Payload, supportedPubKeyAuthAlgosList...)
-		extInfo.Payload = appendInt(extInfo.Payload, len("ping@openssh.com"))
-		extInfo.Payload = append(extInfo.Payload, "ping@openssh.com"...)
-		extInfo.Payload = appendInt(extInfo.Payload, 1)
-		extInfo.Payload = append(extInfo.Payload, "0"...)
+		// extInfo.Payload = appendInt(extInfo.Payload, len("ping@openssh.com"))
+		// extInfo.Payload = append(extInfo.Payload, "ping@openssh.com"...)
+		// extInfo.Payload = appendInt(extInfo.Payload, 1)
+		// extInfo.Payload = append(extInfo.Payload, "0"...)
 		if err := t.conn.writePacket(Marshal(extInfo)); err != nil {
 			return err
 		}

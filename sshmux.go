@@ -401,7 +401,9 @@ func main() {
 				return
 			}
 			defer sendLogAndClose(&logMessage, session, logCh)
-			runPipeSession(session, &logMessage)
+			if err := runPipeSession(session, &logMessage); err != nil {
+				log.Println("runPipeSession:", err)
+			}
 		}()
 	}
 }
