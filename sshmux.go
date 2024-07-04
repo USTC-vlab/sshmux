@@ -352,14 +352,12 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh cha
 	logCh <- *logMessage
 }
 
-func main() {
-	flag.StringVar(&configFile, "c", "/etc/sshmux/config.json", "config file")
-	flag.Parse()
-	configFile, err := os.ReadFile(configFile)
+func mainInside(configFile string) {
+	configFileBytes, err := os.ReadFile(configFile)
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = json.Unmarshal(configFile, &config)
+	err = json.Unmarshal(configFileBytes, &config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -404,4 +402,10 @@ func main() {
 			runPipeSession(session, &logMessage)
 		}()
 	}
+}
+
+func main() {
+	flag.StringVar(&configFile, "c", "/etc/sshmux/config.json", "config file")
+	flag.Parse()
+	mainInside(configFile)
 }
