@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-func mustGenerateKey(path string, typ string) {
+func mustGenerateKey(t *testing.T, path, typ string) {
 	err := exec.Command("ssh-keygen", "-t", typ, "-f", path, "-N", "").Run()
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 }
 
@@ -58,12 +58,21 @@ func initHttp() {
 
 func initEnv(t *testing.T, baseDir string) {
 	// Create host keys for sshd
-	mustGenerateKey(filepath.Join(baseDir, "ssh_host_rsa_key"), "rsa")
-	mustGenerateKey(filepath.Join(baseDir, "ssh_host_ecdsa_key"), "ecdsa")
-	mustGenerateKey(filepath.Join(baseDir, "ssh_host_ed25519_key"), "ed25519")
+	if err := os.RemoveAll(baseDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(baseDir)
+	})
+	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_rsa_key"), "rsa")
+	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_ecdsa_key"), "ecdsa")
+	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_ed25519_key"), "ed25519")
 
 	examplePrivatePath := filepath.Join(baseDir, "example_rsa")
-	mustGenerateKey(examplePrivatePath, "rsa")
+	mustGenerateKey(t, examplePrivatePath, "rsa")
 	examplePrivateBytes, err := os.ReadFile(examplePrivatePath)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +123,7 @@ func sshCommand(port, privateKeyPath string) *exec.Cmd {
 
 func TestSSHClientConnection(t *testing.T) {
 	sleepDuration := 100 * time.Millisecond
-	baseDir := t.TempDir()
+	baseDir := "/tmp/sshmux"
 
 	initEnv(t, baseDir)
 	privateKeyPath := filepath.Join(baseDir, "example_rsa")
