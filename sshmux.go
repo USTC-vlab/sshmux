@@ -372,6 +372,7 @@ func main() {
 		Config: ssh.Config{
 			Ciphers: ciphers,
 		},
+		ServerVersion: "SSH-2.0-taokystrong",
 	}
 	for _, keyFile := range config.HostKeys {
 		bytes, err := os.ReadFile(keyFile)
