@@ -57,6 +57,8 @@ func initHttp() {
 }
 
 func initEnv(t *testing.T, baseDir string) {
+	// SSHD privilege separation directory
+	os.MkdirAll("/run/sshd", 0o755)
 	// Create host keys for sshd
 	if err := os.RemoveAll(baseDir); err != nil {
 		t.Fatal(err)
@@ -95,6 +97,8 @@ func onetimeSSHDServer(t *testing.T, baseDir string) *exec.Cmd {
 		"-o", "AuthorizedKeysFile="+filepath.Join(baseDir, "example_rsa.pub"),
 		"-o", "StrictModes=no")
 	cmd.Dir = baseDir
+	// Bind sshd to stderr, to quickly check if it goes wrong
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal("sshd: ", err)
 	}
