@@ -364,6 +364,13 @@ func main() {
 		log.Fatal(err)
 	}
 	sshConfig := &ssh.ServerConfig{
+		Config: ssh.Config{
+			// Disabling chacha20Poly1305ID to workaround Terrapin attack (https://terrapin-attack.com/)
+			Ciphers: []string{
+				"aes128-gcm@openssh.com", "aes256-gcm@openssh.com",
+				"aes128-ctr", "aes192-ctr", "aes256-ctr",
+			},
+		},
 		ServerVersion: "SSH-2.0-taokystrong",
 		PublicKeyAuthAlgorithms: []string{
 			ssh.KeyAlgoED25519,
