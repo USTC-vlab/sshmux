@@ -1,4 +1,4 @@
-// Copyright 2022 Dinglan Peng <pengdinglan@gmail.com>
+// Copyright 2022-2024 Dinglan Peng <pengdinglan@gmail.com>, Jiawei Fu <i@ibugone.com> and Keyu Tao <me@taoky.moe>
 // Use of this source code is governed by MIT license
 
 package ssh
@@ -8,6 +8,11 @@ import (
 	"fmt"
 	"net"
 )
+
+// Helper functions to export variables from this module
+func DefaultPubKeyAuthAlgos() []string {
+	return supportedPubKeyAuthAlgos
+}
 
 type Downstream struct {
 	*connection
