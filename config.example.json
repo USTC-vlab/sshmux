@@ -1,9 +1,9 @@
 {
     "address": "0.0.0.0:8022",
     "host-keys": [
-        "/etc/sshmux/ssh_host_ed25519_key",
-        "/etc/sshmux/ssh_host_ecdsa_key",
-        "/etc/sshmux/ssh_host_rsa_key"
+        "/tmp/sshmux/ssh_host_ed25519_key",
+        "/tmp/sshmux/ssh_host_ecdsa_key",
+        "/tmp/sshmux/ssh_host_rsa_key"
     ],
     "api": "http://127.0.0.1:5000/ssh",
     "token": "token",
