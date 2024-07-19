@@ -84,7 +84,7 @@ func initUpstreamProxyServer() {
 				log.Fatal(err)
 			}
 			// 2. Send PROXY header
-			header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), downstream.RemoteAddr())
+			header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), nil)
 			_, err = header.WriteTo(downstream)
 			if err != nil {
 				log.Fatal(err)

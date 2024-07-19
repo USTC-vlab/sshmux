@@ -252,7 +252,7 @@ func handshake(session *ssh.PipeSession) error {
 		return err
 	}
 	if config.EnableProxyProtocol {
-		header := proxyproto.HeaderProxyFromAddrs(1, session.Downstream.RemoteAddr(), conn.RemoteAddr())
+		header := proxyproto.HeaderProxyFromAddrs(1, session.Downstream.RemoteAddr(), nil)
 		_, err := header.WriteTo(conn)
 		if err != nil {
 			return err
