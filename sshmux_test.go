@@ -65,52 +65,50 @@ func initUpstreamProxyServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer listener.Close()
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Print(err)
-				continue
-			}
-
-			go func() {
-				// 1. Set up downstream connection with sshmux
-				target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8022")
-				if err != nil {
-					log.Fatal(err)
-				}
-				downstream, err := net.DialTCP("tcp", nil, target)
-				if err != nil {
-					log.Fatal(err)
-				}
-				// 2. Send PROXY header
-				header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), downstream.RemoteAddr())
-				_, err = header.WriteTo(downstream)
-				if err != nil {
-					log.Fatal(err)
-				}
-				// 3. Forward TCP messages in a loop
-				for {
-					data := make([]byte, 0)
-					_, err := conn.Read(data)
-					if err != nil {
-						if err == syscall.EINVAL {
-							downstream.Close()
-						} else {
-							log.Print(err)
-						}
-						break
-					}
-					_, err = downstream.Write(data)
-					if err != nil {
-						log.Print(err)
-						break
-					}
-				}
-			}()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Fatal(err)
 		}
-	}()
+
+		go func() {
+			// 1. Set up downstream connection with sshmux
+			target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8022")
+			if err != nil {
+				log.Fatal(err)
+			}
+			downstream, err := net.DialTCP("tcp", nil, target)
+			if err != nil {
+				log.Fatal(err)
+			}
+			// 2. Send PROXY header
+			header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), downstream.RemoteAddr())
+			_, err = header.WriteTo(downstream)
+			if err != nil {
+				log.Fatal(err)
+			}
+			// 3. Forward TCP messages in a loop
+			for {
+				data := make([]byte, 0)
+				_, err := conn.Read(data)
+				if err != nil {
+					if err == syscall.EINVAL {
+						downstream.Close()
+					} else {
+						log.Print(err)
+					}
+					break
+				}
+				_, err = downstream.Write(data)
+				if err != nil {
+					log.Print(err)
+					break
+				}
+			}
+		}()
+	}
 }
 
 func initDownstreamProxyServer() {
@@ -119,46 +117,44 @@ func initDownstreamProxyServer() {
 		log.Fatal(err)
 	}
 	proxyListener := &proxyproto.Listener{Listener: listener}
+	defer proxyListener.Close()
 
-	go func() {
-		for {
-			conn, err := proxyListener.Accept()
-			if err != nil {
-				log.Print(err)
-				continue
-			}
-
-			go func() {
-				// 1. Set up downstream connection with sshmux
-				target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:2333")
-				if err != nil {
-					log.Fatal(err)
-				}
-				downstream, err := net.DialTCP("tcp", nil, target)
-				if err != nil {
-					log.Fatal(err)
-				}
-				// 2. Forward TCP messages in a loop
-				for {
-					data := make([]byte, 0)
-					_, err := conn.Read(data)
-					if err != nil {
-						if err == syscall.EINVAL {
-							downstream.Close()
-						} else {
-							log.Print(err)
-						}
-						break
-					}
-					_, err = downstream.Write(data)
-					if err != nil {
-						log.Print(err)
-						break
-					}
-				}
-			}()
+	for {
+		conn, err := proxyListener.Accept()
+		if err != nil {
+			log.Fatal(err)
 		}
-	}()
+
+		go func() {
+			// 1. Set up downstream connection with sshmux
+			target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:2333")
+			if err != nil {
+				log.Fatal(err)
+			}
+			downstream, err := net.DialTCP("tcp", nil, target)
+			if err != nil {
+				log.Fatal(err)
+			}
+			// 2. Forward TCP messages in a loop
+			for {
+				data := make([]byte, 0)
+				_, err := conn.Read(data)
+				if err != nil {
+					if err == syscall.EINVAL {
+						downstream.Close()
+					} else {
+						log.Print(err)
+					}
+					break
+				}
+				_, err = downstream.Write(data)
+				if err != nil {
+					log.Print(err)
+					break
+				}
+			}
+		}()
+	}
 }
 
 func initEnv(t *testing.T, baseDir string) {
