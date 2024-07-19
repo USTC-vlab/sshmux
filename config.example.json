@@ -10,6 +10,7 @@
     "recovery-server": "172.30.0.101:2222",
     "recovery-username": ["recovery", "console", "serial"],
     "all-username-nopassword": true,
+    "enable-proxy-protocol": false,
     "username-nopassword": ["vlab", "ubuntu", "root"],
     "invalid-username": ["用户名"],
     "invalid-username-message": "Invalid username %s. Please check https://vlab.ustc.edu.cn/docs/login/ssh/#username for more information.",

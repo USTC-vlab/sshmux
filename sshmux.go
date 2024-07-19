@@ -14,6 +14,7 @@ import (
 	"slices"
 	"time"
 
+	proxyproto "github.com/pires/go-proxyproto"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -30,6 +31,7 @@ type Config struct {
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
 	Logger                 string   `json:"logger"`
 	Banner                 string   `json:"banner"`
+	EnableProxyProtocol    bool     `json:"enable-proxy-protocol"`
 }
 
 type LogMessage struct {
@@ -249,6 +251,13 @@ func handshake(session *ssh.PipeSession) error {
 	if err != nil {
 		return err
 	}
+	if config.EnableProxyProtocol {
+		header := proxyproto.HeaderProxyFromAddrs(1, session.Downstream.RemoteAddr(), conn.RemoteAddr())
+		_, err := header.WriteTo(conn)
+		if err != nil {
+			return err
+		}
+	}
 	config := &ssh.ClientConfig{
 		User:            user,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -374,6 +383,9 @@ func sshmuxServer(configFile string) {
 	listener, err := net.Listen("tcp", config.Address)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if config.EnableProxyProtocol {
+		listener = &proxyproto.Listener{Listener: listener}
 	}
 	defer listener.Close()
 	logCh := make(chan LogMessage, 256)
