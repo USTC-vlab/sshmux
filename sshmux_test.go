@@ -114,7 +114,7 @@ func initUpstreamProxyServer() {
 }
 
 func initDownstreamProxyServer() {
-	listener, err := net.Listen("tcp", "127.0.0.1:2232")
+	listener, err := net.Listen("tcp", "127.0.0.1:2332")
 	if err != nil {
 		log.Fatal(err)
 	}
