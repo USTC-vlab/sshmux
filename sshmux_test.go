@@ -65,7 +65,6 @@ func initUpstreamProxyServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer listener.Close()
 
 	go func() {
 		for {
@@ -119,10 +118,7 @@ func initDownstreamProxyServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer listener.Close()
-
 	proxyListener := &proxyproto.Listener{Listener: listener}
-	defer proxyListener.Close()
 
 	go func() {
 		for {

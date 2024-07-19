@@ -14,7 +14,7 @@ import (
 	"slices"
 	"time"
 
-	proxyproto "github.com/pires/go-proxyproto"
+	"github.com/pires/go-proxyproto"
 	"golang.org/x/crypto/ssh"
 )
 
