@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -61,7 +60,7 @@ func initHttp() {
 }
 
 func initUpstreamProxyServer() {
-	listener, err := net.Listen("tcp", "127.0.0.1:2222")
+	listener, err := net.Listen("tcp", "127.0.0.1:9999")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -90,23 +89,14 @@ func initUpstreamProxyServer() {
 				log.Fatal(err)
 			}
 			// 3. Forward TCP messages in a loop
-			for {
-				data := make([]byte, 0)
-				_, err := conn.Read(data)
-				if err != nil {
-					if err == syscall.EINVAL {
-						downstream.Close()
-					} else {
-						log.Print(err)
-					}
-					break
-				}
-				_, err = downstream.Write(data)
-				if err != nil {
-					log.Print(err)
-					break
-				}
-			}
+			go func() {
+				defer downstream.Close()
+				io.Copy(downstream, conn)
+			}()
+			go func() {
+				defer downstream.Close()
+				io.Copy(conn, downstream)
+			}()
 		}()
 	}
 }
@@ -136,23 +126,14 @@ func initDownstreamProxyServer() {
 				log.Fatal(err)
 			}
 			// 2. Forward TCP messages in a loop
-			for {
-				data := make([]byte, 0)
-				_, err := conn.Read(data)
-				if err != nil {
-					if err == syscall.EINVAL {
-						downstream.Close()
-					} else {
-						log.Print(err)
-					}
-					break
-				}
-				_, err = downstream.Write(data)
-				if err != nil {
-					log.Print(err)
-					break
-				}
-			}
+			go func() {
+				defer downstream.Close()
+				io.Copy(downstream, conn)
+			}()
+			go func() {
+				defer downstream.Close()
+				io.Copy(conn, downstream)
+			}()
 		}()
 	}
 }
@@ -247,7 +228,7 @@ func TestSSHClientConnection(t *testing.T) {
 
 	cmd = onetimeSSHDServer(t, baseDir)
 	time.Sleep(sleepDuration)
-	err = sshCommand("2222", privateKeyPath).Run()
+	err = sshCommand("9999", privateKeyPath).Run()
 	if err != nil {
 		t.Fatal("ssh: ", err)
 	}
