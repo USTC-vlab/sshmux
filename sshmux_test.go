@@ -74,7 +74,7 @@ func initUpstreamProxyServer() {
 
 		go func() {
 			// 1. Set up downstream connection with sshmux
-			target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8022")
+			target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8122")
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -226,11 +226,21 @@ func TestSSHClientConnection(t *testing.T) {
 	}
 	waitForSSHD(t, cmd)
 
+	// test sshmux
+	cmd = onetimeSSHDServer(t, baseDir)
+	time.Sleep(sleepDuration)
+	err = sshCommand("8022", privateKeyPath).Run()
+	if err != nil {
+		t.Fatal("ssh: ", err)
+	}
+	waitForSSHD(t, cmd)
+
+	// test sshmux with proxy protocol
 	cmd = onetimeSSHDServer(t, baseDir)
 	time.Sleep(sleepDuration)
 	err = sshCommand("9999", privateKeyPath).Run()
 	if err != nil {
-		t.Fatal("ssh: ", err)
+		t.Fatal("ssh (proxied): ", err)
 	}
 	waitForSSHD(t, cmd)
 }

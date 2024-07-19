@@ -24,8 +24,9 @@ type Upstream struct {
 }
 
 type PipeSession struct {
-	Downstream *Downstream
-	Upstream   *Upstream
+	Downstream    *Downstream
+	Upstream      *Upstream
+	ProxyProtocol bool
 }
 
 type AuthRequest struct {
@@ -42,7 +43,7 @@ type AuthResult struct {
 	PartialSuccess bool
 }
 
-func NewPipeSession(c net.Conn, config *ServerConfig) (session *PipeSession, err error) {
+func NewPipeSession(c net.Conn, config *ServerConfig, proxyProtocol bool) (session *PipeSession, err error) {
 	serverConfig := *config
 	serverConfig.SetDefaults()
 	conn := &connection{
@@ -62,7 +63,8 @@ func NewPipeSession(c net.Conn, config *ServerConfig) (session *PipeSession, err
 	}()
 
 	session = &PipeSession{
-		Downstream: downstream,
+		Downstream:    downstream,
+		ProxyProtocol: proxyProtocol,
 	}
 
 	return session, nil

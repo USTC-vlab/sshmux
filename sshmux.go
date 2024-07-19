@@ -20,6 +20,7 @@ import (
 
 type Config struct {
 	Address                string   `json:"address"`
+	ProxiedAddress         string   `json:"proxied-address,omitempty"`
 	HostKeys               []string `json:"host-keys"`
 	API                    string   `json:"api"`
 	Token                  string   `json:"token"`
@@ -31,7 +32,6 @@ type Config struct {
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
 	Logger                 string   `json:"logger"`
 	Banner                 string   `json:"banner"`
-	EnableProxyProtocol    bool     `json:"enable-proxy-protocol"`
 }
 
 type LogMessage struct {
@@ -251,7 +251,7 @@ func handshake(session *ssh.PipeSession) error {
 	if err != nil {
 		return err
 	}
-	if config.EnableProxyProtocol {
+	if session.ProxyProtocol {
 		header := proxyproto.HeaderProxyFromAddrs(1, session.Downstream.RemoteAddr(), nil)
 		_, err := header.WriteTo(conn)
 		if err != nil {
@@ -380,36 +380,45 @@ func sshmuxServer(configFile string) {
 		}
 		sshConfig.AddHostKey(key)
 	}
-	listener, err := net.Listen("tcp", config.Address)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if config.EnableProxyProtocol {
-		listener = &proxyproto.Listener{Listener: listener}
-	}
-	defer listener.Close()
-	logCh := make(chan LogMessage, 256)
-	go runLogger(logCh)
-	for {
-		conn, err := listener.Accept()
+	sshd_proxy := func(address string, proxy bool) {
+		listener, err := net.Listen("tcp", address)
 		if err != nil {
-			log.Printf("Error on Accept: %s\n", err)
-			continue
+			log.Fatal(err)
 		}
-		go func() {
-			session, err := ssh.NewPipeSession(conn, sshConfig)
-			logMessage := LogMessage{
-				LoginTime: time.Now().Unix(),
-				ClientIp:  conn.RemoteAddr().String(),
-			}
+		if proxy {
+			listener = &proxyproto.Listener{Listener: listener}
+		}
+		defer listener.Close()
+		logCh := make(chan LogMessage, 256)
+		go runLogger(logCh)
+		for {
+			conn, err := listener.Accept()
 			if err != nil {
-				return
+				log.Printf("Error on Accept: %s\n", err)
+				continue
 			}
-			defer sendLogAndClose(&logMessage, session, logCh)
-			if err := runPipeSession(session, &logMessage); err != nil {
-				log.Println("runPipeSession:", err)
-			}
-		}()
+			go func() {
+				session, err := ssh.NewPipeSession(conn, sshConfig, proxy)
+				logMessage := LogMessage{
+					LoginTime: time.Now().Unix(),
+					ClientIp:  conn.RemoteAddr().String(),
+				}
+				if err != nil {
+					return
+				}
+				defer sendLogAndClose(&logMessage, session, logCh)
+				if err := runPipeSession(session, &logMessage); err != nil {
+					log.Println("runPipeSession:", err)
+				}
+			}()
+		}
+	}
+	// Plain listener
+	go sshd_proxy(config.Address, false)
+
+	// Proxy listener
+	if config.ProxiedAddress != "" {
+		go sshd_proxy(config.ProxiedAddress, true)
 	}
 }
 
