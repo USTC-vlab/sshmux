@@ -82,13 +82,13 @@ func initUpstreamProxyServer() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			// 2. Send PROXY header
+			// 2. Send PROXY header to downstream
 			header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), nil)
 			_, err = header.WriteTo(downstream)
 			if err != nil {
 				log.Fatal(err)
 			}
-			// 3. Forward TCP messages in a loop
+			// 3. Forward TCP messages in both ways
 			go func() {
 				defer downstream.Close()
 				io.Copy(downstream, conn)
@@ -125,7 +125,7 @@ func initDownstreamProxyServer() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			// 2. Forward TCP messages in a loop
+			// 2. Forward TCP messages in both ways
 			go func() {
 				defer downstream.Close()
 				io.Copy(downstream, conn)
