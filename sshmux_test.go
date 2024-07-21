@@ -124,6 +124,7 @@ func initDownstreamProxyServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Enforce listener to accept PROXY protocol
 	proxyListener := &proxyproto.Listener{
 		Listener: listener,
 		Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
@@ -218,21 +219,21 @@ func waitForSSHD(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func sshCommand(port int, privateKeyPath string) *exec.Cmd {
+func sshCommand(address *net.TCPAddr, privateKeyPath string) *exec.Cmd {
 	return exec.Command(
-		"ssh", "-p", fmt.Sprint(port),
+		"ssh", "-p", fmt.Sprint(address.Port),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ControlMaster=no",
 		"-i", privateKeyPath,
 		"-o", "IdentityAgent=no",
-		"localhost", "uname")
+		address.IP.String(), "uname")
 }
 
-func testWithSSHClient(t *testing.T, description string, baseDir, privateKeyPath string, port int, proxy bool) {
+func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool, baseDir, privateKeyPath string) {
 	enableProxy = proxy
 	cmd := onetimeSSHDServer(t, baseDir)
 	time.Sleep(100 * time.Millisecond)
-	err := sshCommand(port, privateKeyPath).Run()
+	err := sshCommand(address, privateKeyPath).Run()
 	if err != nil {
 		t.Fatal(fmt.Sprintf("%s: ", description), err)
 	}
@@ -247,17 +248,17 @@ func TestSSHClientConnection(t *testing.T) {
 	go sshmuxServer("config.example.json")
 
 	// sanity check
-	testWithSSHClient(t, "sanity check", baseDir, privateKeyPath, sshdServerAddr.Port, false)
+	testWithSSHClient(t, sshdServerAddr, "sanity check", false, baseDir, privateKeyPath)
 
 	// test sshmux
-	testWithSSHClient(t, "sshmux", baseDir, privateKeyPath, sshmuxServerAddr.Port, false)
+	testWithSSHClient(t, sshmuxServerAddr, "sshmux", false, baseDir, privateKeyPath)
 
 	// test sshmux with upstream proxy
-	testWithSSHClient(t, "sshmux (proxied src)", baseDir, privateKeyPath, sshmuxProxyAddr.Port, false)
+	testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false, baseDir, privateKeyPath)
 
 	// test sshmux with downstream proxy
-	testWithSSHClient(t, "sshmux (proxied dst)", baseDir, privateKeyPath, sshmuxServerAddr.Port, true)
+	testWithSSHClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true, baseDir, privateKeyPath)
 
 	// test sshmux with two-way proxy
-	testWithSSHClient(t, "sshmux (proxied)", baseDir, privateKeyPath, sshmuxProxyAddr.Port, true)
+	testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true, baseDir, privateKeyPath)
 }
