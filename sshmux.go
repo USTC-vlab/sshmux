@@ -66,7 +66,7 @@ type AuthResponse struct {
 	PrivateKey string `json:"private_key"`
 	Cert       string `json:"cert"`
 	Id         int    `json:"vmid"`
-	Proxy      bool   `json:"proxy_protocol,omitempty"`
+	Proxy      *bool  `json:"proxy_protocol,omitempty"`
 }
 
 type UpstreamInformation struct {
@@ -130,7 +130,11 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 		upstream.Host = response.Address
 	}
 	upstream.Signer = parsePrivateKey(response.PrivateKey, response.Cert)
-	upstream.Proxy = response.Proxy
+	if response.Proxy != nil && *response.Proxy {
+		upstream.Proxy = true
+	} else {
+		upstream.Proxy = false
+	}
 	return &upstream, nil
 }
 

@@ -58,10 +58,11 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if enableProxy {
 		res.Address = sshdProxyAddr.String()
-		res.Proxy = true
+		res.Proxy = new(bool)
+		*res.Proxy = true
 	} else {
 		res.Address = sshdServerAddr.String()
-		res.Proxy = false
+		res.Proxy = nil
 	}
 
 	jsonRes, err := json.Marshal(res)
