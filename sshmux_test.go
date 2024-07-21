@@ -97,24 +97,24 @@ func initUpstreamProxyServer() {
 
 		go func() {
 			// 1. Set up downstream connection with sshmux
-			downstream, err := net.DialTCP("tcp", nil, sshmuxServerAddr)
+			sshmux, err := net.DialTCP("tcp", nil, sshmuxServerAddr)
 			if err != nil {
 				log.Fatal(err)
 			}
-			// 2. Send PROXY header to downstream
+			// 2. Send PROXY header to sshmux
 			header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), nil)
-			_, err = header.WriteTo(downstream)
+			_, err = header.WriteTo(sshmux)
 			if err != nil {
 				log.Fatal(err)
 			}
 			// 3. Forward TCP messages in both ways
 			go func() {
-				defer downstream.Close()
-				io.Copy(downstream, conn)
+				defer sshmux.Close()
+				io.Copy(sshmux, conn)
 			}()
 			go func() {
-				defer downstream.Close()
-				io.Copy(conn, downstream)
+				defer sshmux.Close()
+				io.Copy(conn, sshmux)
 			}()
 		}()
 	}
@@ -142,18 +142,18 @@ func initDownstreamProxyServer() {
 
 		go func() {
 			// 1. Set up downstream connection with sshd
-			downstream, err := net.DialTCP("tcp", nil, sshdServerAddr)
+			sshd, err := net.DialTCP("tcp", nil, sshdServerAddr)
 			if err != nil {
 				log.Fatal(err)
 			}
 			// 2. Forward TCP messages in both ways
 			go func() {
-				defer downstream.Close()
-				io.Copy(downstream, conn)
+				defer sshd.Close()
+				io.Copy(sshd, conn)
 			}()
 			go func() {
-				defer downstream.Close()
-				io.Copy(conn, downstream)
+				defer sshd.Close()
+				io.Copy(conn, sshd)
 			}()
 		}()
 	}
@@ -220,14 +220,14 @@ func waitForSSHD(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func sshCommand(address *net.TCPAddr, privateKeyPath string) *exec.Cmd {
+func sshCommand(server *net.TCPAddr, privateKeyPath string) *exec.Cmd {
 	return exec.Command(
-		"ssh", "-p", fmt.Sprint(address.Port),
+		"ssh", "-p", fmt.Sprint(server.Port),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ControlMaster=no",
 		"-i", privateKeyPath,
 		"-o", "IdentityAgent=no",
-		address.IP.String(), "uname")
+		server.IP.String(), "uname")
 }
 
 func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool, baseDir, privateKeyPath string) {
