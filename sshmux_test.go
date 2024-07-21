@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -15,6 +16,19 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
+var sshmuxProxyAddr *net.TCPAddr = localhostTCPAddr(8122)
+var sshmuxServerAddr *net.TCPAddr = localhostTCPAddr(8022)
+var sshdProxyAddr *net.TCPAddr = localhostTCPAddr(2332)
+var sshdServerAddr *net.TCPAddr = localhostTCPAddr(2333)
+var apiServerAddr *net.TCPAddr = localhostTCPAddr(5000)
+
+func localhostTCPAddr(port int) *net.TCPAddr {
+	return &net.TCPAddr{
+		IP:   net.IPv4(127, 0, 0, 1),
+		Port: port,
+	}
+}
+
 func mustGenerateKey(t *testing.T, path, typ string) {
 	err := exec.Command("ssh-keygen", "-t", typ, "-f", path, "-N", "").Run()
 	if err != nil {
@@ -23,6 +37,7 @@ func mustGenerateKey(t *testing.T, path, typ string) {
 }
 
 var examplePrivate string
+var enableProxy bool
 
 func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
@@ -38,10 +53,17 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 
 	res := &AuthResponse{
 		Status:     "ok",
-		Address:    "127.0.0.1:2332",
 		Id:         1141919,
 		PrivateKey: examplePrivate,
 	}
+	if enableProxy {
+		res.Address = sshdProxyAddr.String()
+		res.Proxy = true
+	} else {
+		res.Address = sshdServerAddr.String()
+		res.Proxy = false
+	}
+
 	jsonRes, err := json.Marshal(res)
 	if err != nil {
 		http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
@@ -54,13 +76,13 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 func initHttp() {
 	http.HandleFunc("/ssh", sshAPIHandler)
 
-	if err := http.ListenAndServe("127.0.0.1:5000", nil); err != nil {
+	if err := http.ListenAndServe(apiServerAddr.String(), nil); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func initUpstreamProxyServer() {
-	listener, err := net.Listen("tcp", "127.0.0.1:9999")
+	listener, err := net.ListenTCP("tcp", sshmuxProxyAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,11 +96,7 @@ func initUpstreamProxyServer() {
 
 		go func() {
 			// 1. Set up downstream connection with sshmux
-			target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8122")
-			if err != nil {
-				log.Fatal(err)
-			}
-			downstream, err := net.DialTCP("tcp", nil, target)
+			downstream, err := net.DialTCP("tcp", nil, sshmuxServerAddr)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -102,11 +120,16 @@ func initUpstreamProxyServer() {
 }
 
 func initDownstreamProxyServer() {
-	listener, err := net.Listen("tcp", "127.0.0.1:2332")
+	listener, err := net.ListenTCP("tcp", sshdProxyAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	proxyListener := &proxyproto.Listener{Listener: listener}
+	proxyListener := &proxyproto.Listener{
+		Listener: listener,
+		Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
+			return proxyproto.REQUIRE, nil
+		},
+	}
 	defer proxyListener.Close()
 
 	for {
@@ -116,12 +139,8 @@ func initDownstreamProxyServer() {
 		}
 
 		go func() {
-			// 1. Set up downstream connection with sshmux
-			target, err := net.ResolveTCPAddr("tcp", "127.0.0.1:2333")
-			if err != nil {
-				log.Fatal(err)
-			}
-			downstream, err := net.DialTCP("tcp", nil, target)
+			// 1. Set up downstream connection with sshd
+			downstream, err := net.DialTCP("tcp", nil, sshdServerAddr)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -177,7 +196,7 @@ func onetimeSSHDServer(t *testing.T, baseDir string) *exec.Cmd {
 	cmd := exec.Command(
 		sshdPath, "-d",
 		"-h", filepath.Join(baseDir, "ssh_host_ed25519_key"),
-		"-p", "2333",
+		"-p", fmt.Sprint(sshdServerAddr.Port),
 		"-o", "AuthorizedKeysFile="+filepath.Join(baseDir, "example_rsa.pub"),
 		"-o", "StrictModes=no")
 	cmd.Dir = baseDir
@@ -199,9 +218,9 @@ func waitForSSHD(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func sshCommand(port, privateKeyPath string) *exec.Cmd {
+func sshCommand(port int, privateKeyPath string) *exec.Cmd {
 	return exec.Command(
-		"ssh", "-p", port,
+		"ssh", "-p", fmt.Sprint(port),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ControlMaster=no",
 		"-i", privateKeyPath,
@@ -209,38 +228,36 @@ func sshCommand(port, privateKeyPath string) *exec.Cmd {
 		"localhost", "uname")
 }
 
+func testWithSSHClient(t *testing.T, description string, baseDir, privateKeyPath string, port int, proxy bool) {
+	enableProxy = proxy
+	cmd := onetimeSSHDServer(t, baseDir)
+	time.Sleep(100 * time.Millisecond)
+	err := sshCommand(port, privateKeyPath).Run()
+	if err != nil {
+		t.Fatal(fmt.Sprintf("%s: ", description), err)
+	}
+	waitForSSHD(t, cmd)
+}
+
 func TestSSHClientConnection(t *testing.T) {
-	sleepDuration := 100 * time.Millisecond
 	baseDir := "/tmp/sshmux"
 
 	initEnv(t, baseDir)
 	privateKeyPath := filepath.Join(baseDir, "example_rsa")
 	go sshmuxServer("config.example.json")
 
-	// Sanity check
-	cmd := onetimeSSHDServer(t, baseDir)
-	time.Sleep(sleepDuration)
-	err := sshCommand("2333", privateKeyPath).Run()
-	if err != nil {
-		t.Fatal("sanity check: ", err)
-	}
-	waitForSSHD(t, cmd)
+	// sanity check
+	testWithSSHClient(t, "sanity check", baseDir, privateKeyPath, sshdServerAddr.Port, false)
 
 	// test sshmux
-	cmd = onetimeSSHDServer(t, baseDir)
-	time.Sleep(sleepDuration)
-	err = sshCommand("8022", privateKeyPath).Run()
-	if err != nil {
-		t.Fatal("ssh: ", err)
-	}
-	waitForSSHD(t, cmd)
+	testWithSSHClient(t, "sshmux", baseDir, privateKeyPath, sshmuxServerAddr.Port, false)
 
-	// test sshmux with proxy protocol
-	cmd = onetimeSSHDServer(t, baseDir)
-	time.Sleep(sleepDuration)
-	err = sshCommand("9999", privateKeyPath).Run()
-	if err != nil {
-		t.Fatal("ssh (proxied): ", err)
-	}
-	waitForSSHD(t, cmd)
+	// test sshmux with upstream proxy
+	testWithSSHClient(t, "sshmux (proxied src)", baseDir, privateKeyPath, sshmuxProxyAddr.Port, false)
+
+	// test sshmux with downstream proxy
+	testWithSSHClient(t, "sshmux (proxied dst)", baseDir, privateKeyPath, sshmuxServerAddr.Port, true)
+
+	// test sshmux with two-way proxy
+	testWithSSHClient(t, "sshmux (proxied)", baseDir, privateKeyPath, sshmuxProxyAddr.Port, true)
 }
