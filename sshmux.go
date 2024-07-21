@@ -61,19 +61,19 @@ type AuthRequestPassword struct {
 }
 
 type AuthResponse struct {
-	Status     string `json:"status"`
-	Address    string `json:"address"`
-	PrivateKey string `json:"private_key"`
-	Cert       string `json:"cert"`
-	Id         int    `json:"vmid"`
-	Proxy      *bool  `json:"proxy_protocol,omitempty"`
+	Status        string `json:"status"`
+	Address       string `json:"address"`
+	PrivateKey    string `json:"private_key"`
+	Cert          string `json:"cert"`
+	Id            int    `json:"vmid"`
+	ProxyProtocol *byte  `json:"proxy_protocol,omitempty"`
 }
 
 type UpstreamInformation struct {
-	Host     string
-	Signer   ssh.Signer
-	Password *string
-	Proxy    bool
+	Host          string
+	Signer        ssh.Signer
+	Password      *string
+	ProxyProtocol byte
 }
 
 func parsePrivateKey(key string, cert string) ssh.Signer {
@@ -130,10 +130,8 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 		upstream.Host = response.Address
 	}
 	upstream.Signer = parsePrivateKey(response.PrivateKey, response.Cert)
-	if response.Proxy != nil && *response.Proxy {
-		upstream.Proxy = true
-	} else {
-		upstream.Proxy = false
+	if response.ProxyProtocol != nil {
+		upstream.ProxyProtocol = *response.ProxyProtocol
 	}
 	return &upstream, nil
 }
@@ -257,8 +255,8 @@ func handshake(session *ssh.PipeSession) error {
 	if err != nil {
 		return err
 	}
-	if upstream.Proxy {
-		header := proxyproto.HeaderProxyFromAddrs(1, session.Downstream.RemoteAddr(), nil)
+	if upstream.ProxyProtocol > 0 {
+		header := proxyproto.HeaderProxyFromAddrs(upstream.ProxyProtocol, session.Downstream.RemoteAddr(), nil)
 		_, err := header.WriteTo(conn)
 		if err != nil {
 			return err

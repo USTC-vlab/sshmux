@@ -57,12 +57,11 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 		PrivateKey: examplePrivate,
 	}
 	if enableProxy {
+		version := byte(2)
 		res.Address = sshdProxyAddr.String()
-		res.Proxy = new(bool)
-		*res.Proxy = true
+		res.ProxyProtocol = &version
 	} else {
 		res.Address = sshdServerAddr.String()
-		res.Proxy = nil
 	}
 
 	jsonRes, err := json.Marshal(res)
@@ -102,7 +101,7 @@ func initUpstreamProxyServer() {
 				log.Fatal(err)
 			}
 			// 2. Send PROXY header to sshmux
-			header := proxyproto.HeaderProxyFromAddrs(1, conn.RemoteAddr(), nil)
+			header := proxyproto.HeaderProxyFromAddrs(2, conn.RemoteAddr(), nil)
 			_, err = header.WriteTo(sshmux)
 			if err != nil {
 				log.Fatal(err)
