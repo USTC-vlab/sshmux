@@ -57,9 +57,8 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 		PrivateKey: examplePrivate,
 	}
 	if enableProxy {
-		version := byte(2)
 		res.Address = sshdProxyAddr.String()
-		res.ProxyProtocol = &version
+		res.ProxyProtocol = 2
 	} else {
 		res.Address = sshdServerAddr.String()
 	}
