@@ -359,6 +359,50 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh cha
 	logCh <- *logMessage
 }
 
+func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxy bool, proxyMux bool) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if proxy {
+		if !proxyMux {
+			// Enforce listener to accept PROXY protocol
+			listener = &proxyproto.Listener{
+				Listener: listener,
+				Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
+					return proxyproto.REQUIRE, nil
+				},
+			}
+		} else {
+			listener = &proxyproto.Listener{Listener: listener}
+		}
+	}
+	defer listener.Close()
+	logCh := make(chan LogMessage, 256)
+	go runLogger(logCh)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Error on Accept: %s\n", err)
+			continue
+		}
+		go func() {
+			session, err := ssh.NewPipeSession(conn, sshConfig)
+			logMessage := LogMessage{
+				LoginTime: time.Now().Unix(),
+				ClientIp:  conn.RemoteAddr().String(),
+			}
+			if err != nil {
+				return
+			}
+			defer sendLogAndClose(&logMessage, session, logCh)
+			if err := runPipeSession(session, &logMessage); err != nil {
+				log.Println("runPipeSession:", err)
+			}
+		}()
+	}
+}
+
 func sshmuxServer(configFile string) {
 	configFileBytes, err := os.ReadFile(configFile)
 	if err != nil {
@@ -383,62 +427,19 @@ func sshmuxServer(configFile string) {
 		}
 		sshConfig.AddHostKey(key)
 	}
-	sshmuxStartup := func(address string, proxy bool, proxyMux bool) {
-		listener, err := net.Listen("tcp", address)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if proxy {
-			if !proxyMux {
-				// Enforce listener to accept PROXY protocol
-				listener = &proxyproto.Listener{
-					Listener: listener,
-					Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
-						return proxyproto.REQUIRE, nil
-					},
-				}
-			} else {
-				listener = &proxyproto.Listener{Listener: listener}
-			}
-		}
-		defer listener.Close()
-		logCh := make(chan LogMessage, 256)
-		go runLogger(logCh)
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Printf("Error on Accept: %s\n", err)
-				continue
-			}
-			go func() {
-				session, err := ssh.NewPipeSession(conn, sshConfig)
-				logMessage := LogMessage{
-					LoginTime: time.Now().Unix(),
-					ClientIp:  conn.RemoteAddr().String(),
-				}
-				if err != nil {
-					return
-				}
-				defer sendLogAndClose(&logMessage, session, logCh)
-				if err := runPipeSession(session, &logMessage); err != nil {
-					log.Println("runPipeSession:", err)
-				}
-			}()
-		}
-	}
 	if config.Address == config.ProxiedAddress {
 		if config.Address == "" {
 			log.Println("No address specified, defaulting to 0.0.0.0:8022")
-			go sshmuxStartup("0.0.0.0:8022", false, false)
+			go sshmuxListenAddr("0.0.0.0:8022", sshConfig, false, false)
 		} else {
-			go sshmuxStartup(config.Address, true, true)
+			go sshmuxListenAddr(config.Address, sshConfig, true, true)
 		}
 	} else {
 		if config.Address != "" {
-			go sshmuxStartup(config.Address, false, false)
+			go sshmuxListenAddr(config.Address, sshConfig, false, false)
 		}
 		if config.ProxiedAddress != "" {
-			go sshmuxStartup(config.ProxiedAddress, true, false)
+			go sshmuxListenAddr(config.ProxiedAddress, sshConfig, true, false)
 		}
 	}
 }
