@@ -19,7 +19,7 @@ import (
 var sshmuxProxyAddr *net.TCPAddr = localhostTCPAddr(8222)
 var sshmuxProxiedAddr *net.TCPAddr = localhostTCPAddr(8122)
 var sshmuxServerAddr *net.TCPAddr = localhostTCPAddr(8022)
-var sshdProxyAddr *net.TCPAddr = localhostTCPAddr(2332)
+var sshdProxiedAddr *net.TCPAddr = localhostTCPAddr(2332)
 var sshdServerAddr *net.TCPAddr = localhostTCPAddr(2333)
 var apiServerAddr *net.TCPAddr = localhostTCPAddr(5000)
 
@@ -58,7 +58,7 @@ func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
 		PrivateKey: examplePrivate,
 	}
 	if enableProxy {
-		res.Address = sshdProxyAddr.String()
+		res.Address = sshdProxiedAddr.String()
 		res.ProxyProtocol = 2
 	} else {
 		res.Address = sshdServerAddr.String()
@@ -106,7 +106,7 @@ func initUpstreamProxyServer() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			// 3. Forward TCP messages in both ways
+			// 3. Forward TCP messages in both directions
 			go func() {
 				defer sshmux.Close()
 				io.Copy(sshmux, conn)
@@ -120,7 +120,7 @@ func initUpstreamProxyServer() {
 }
 
 func initDownstreamProxyServer() {
-	listener, err := net.ListenTCP("tcp", sshdProxyAddr)
+	listener, err := net.ListenTCP("tcp", sshdProxiedAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func initDownstreamProxyServer() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			// 2. Forward TCP messages in both ways
+			// 2. Forward TCP messages in both directions
 			go func() {
 				defer sshd.Close()
 				io.Copy(sshd, conn)
