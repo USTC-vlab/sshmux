@@ -383,18 +383,22 @@ func sshmuxServer(configFile string) {
 		}
 		sshConfig.AddHostKey(key)
 	}
-	sshmuxStartup := func(address string, proxy bool) {
+	sshmuxStartup := func(address string, proxy bool, proxyMux bool) {
 		listener, err := net.Listen("tcp", address)
 		if err != nil {
 			log.Fatal(err)
 		}
 		if proxy {
-			// Enforce listener to accept PROXY protocol
-			listener = &proxyproto.Listener{
-				Listener: listener,
-				Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
-					return proxyproto.REQUIRE, nil
-				},
+			if !proxyMux {
+				// Enforce listener to accept PROXY protocol
+				listener = &proxyproto.Listener{
+					Listener: listener,
+					Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
+						return proxyproto.REQUIRE, nil
+					},
+				}
+			} else {
+				listener = &proxyproto.Listener{Listener: listener}
 			}
 		}
 		defer listener.Close()
@@ -422,18 +426,20 @@ func sshmuxServer(configFile string) {
 			}()
 		}
 	}
-	sshmuxRun := false
-	if config.Address != "" {
-		sshmuxRun = true
-		go sshmuxStartup(config.Address, false)
-	}
-	if config.ProxiedAddress != "" {
-		sshmuxRun = true
-		go sshmuxStartup(config.ProxiedAddress, true)
-	}
-	if !sshmuxRun {
-		log.Println("No address specified, defaulting to 0.0.0.0:8022")
-		go sshmuxStartup("0.0.0.0:8022", false)
+	if config.Address == config.ProxiedAddress {
+		if config.Address == "" {
+			log.Println("No address specified, defaulting to 0.0.0.0:8022")
+			go sshmuxStartup("0.0.0.0:8022", false, false)
+		} else {
+			go sshmuxStartup(config.Address, true, true)
+		}
+	} else {
+		if config.Address != "" {
+			go sshmuxStartup(config.Address, false, false)
+		}
+		if config.ProxiedAddress != "" {
+			go sshmuxStartup(config.ProxiedAddress, true, false)
+		}
 	}
 }
 
