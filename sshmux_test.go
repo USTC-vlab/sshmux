@@ -112,7 +112,7 @@ func initUpstreamProxyServer() {
 				io.Copy(sshmux, conn)
 			}()
 			go func() {
-				defer sshmux.Close()
+				defer conn.Close()
 				io.Copy(conn, sshmux)
 			}()
 		}()
@@ -151,7 +151,7 @@ func initDownstreamProxyServer() {
 				io.Copy(sshd, conn)
 			}()
 			go func() {
-				defer sshd.Close()
+				defer conn.Close()
 				io.Copy(conn, sshd)
 			}()
 		}()
