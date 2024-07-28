@@ -16,8 +16,7 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
-var sshmuxProxyAddr *net.TCPAddr = localhostTCPAddr(8222)
-var sshmuxProxiedAddr *net.TCPAddr = localhostTCPAddr(8122)
+var sshmuxProxyAddr *net.TCPAddr = localhostTCPAddr(8122)
 var sshmuxServerAddr *net.TCPAddr = localhostTCPAddr(8022)
 var sshdProxiedAddr *net.TCPAddr = localhostTCPAddr(2332)
 var sshdServerAddr *net.TCPAddr = localhostTCPAddr(2333)
@@ -88,6 +87,8 @@ func initUpstreamProxyServer() {
 	}
 	defer listener.Close()
 
+	localAddr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 22)}
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -96,7 +97,7 @@ func initUpstreamProxyServer() {
 
 		go func() {
 			// 1. Set up downstream connection with sshmux
-			sshmux, err := net.DialTCP("tcp", nil, sshmuxProxiedAddr)
+			sshmux, err := net.DialTCP("tcp", localAddr, sshmuxServerAddr)
 			if err != nil {
 				log.Fatal(err)
 			}

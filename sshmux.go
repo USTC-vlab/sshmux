@@ -10,9 +10,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/pires/go-proxyproto"
@@ -21,7 +21,7 @@ import (
 
 type Config struct {
 	Address                string   `json:"address"`
-	ProxiedAddress         string   `json:"proxied-address,omitempty"`
+	ProxyCIDRs             []string `json:"proxy-protocol-allowed-cidrs"`
 	HostKeys               []string `json:"host-keys"`
 	API                    string   `json:"api"`
 	Token                  string   `json:"token"`
@@ -360,30 +360,31 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh cha
 	logCh <- *logMessage
 }
 
-func sshmuxListenAddr(address string, waitgroup *sync.WaitGroup, sshConfig *ssh.ServerConfig, proxy bool, proxyMux bool) {
-	// configure waitgroup callback
-	defer func() {
-		if waitgroup != nil {
-			waitgroup.Done()
-		}
-	}()
-
+func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstreams []netip.Prefix) {
 	// set up TCP listener
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if proxy {
-		if !proxyMux {
-			// Enforce listener to accept PROXY protocol
-			listener = &proxyproto.Listener{
-				Listener: listener,
-				Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
-					return proxyproto.REQUIRE, nil
-				},
-			}
-		} else {
-			listener = &proxyproto.Listener{Listener: listener}
+	if len(proxyUpstreams) > 0 {
+		listener = &proxyproto.Listener{
+			Listener: listener,
+			Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
+				// parse upstream address
+				upstreamAddrPort, err := netip.ParseAddrPort(upstream.String())
+				if err != nil {
+					return proxyproto.SKIP, nil
+				}
+				upstreamAddr := upstreamAddrPort.Addr()
+				// only read PROXY header from allowed CIDRs
+				for _, network := range proxyUpstreams {
+					if network.Contains(upstreamAddr) {
+						return proxyproto.USE, nil
+					}
+				}
+				// do nothing if upstream not in the allow list
+				return proxyproto.SKIP, nil
+			},
 		}
 	}
 	defer listener.Close()
@@ -440,24 +441,15 @@ func sshmuxServer(configFile string) {
 		}
 		sshConfig.AddHostKey(key)
 	}
-	waitgroup := sync.WaitGroup{}
-	waitgroup.Add(1)
-	if config.Address == config.ProxiedAddress {
-		if config.Address == "" {
-			log.Println("No address specified, defaulting to 0.0.0.0:8022")
-			go sshmuxListenAddr("0.0.0.0:8022", &waitgroup, sshConfig, false, false)
-		} else {
-			go sshmuxListenAddr(config.Address, &waitgroup, sshConfig, true, true)
+	proxyUpstreams := make([]netip.Prefix, 0)
+	for _, cidr := range config.ProxyCIDRs {
+		network, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			log.Fatal(err)
 		}
-	} else {
-		if config.Address != "" {
-			go sshmuxListenAddr(config.Address, &waitgroup, sshConfig, false, false)
-		}
-		if config.ProxiedAddress != "" {
-			go sshmuxListenAddr(config.ProxiedAddress, &waitgroup, sshConfig, true, false)
-		}
+		proxyUpstreams = append(proxyUpstreams, network)
 	}
-	waitgroup.Wait()
+	sshmuxListenAddr(config.Address, sshConfig, proxyUpstreams)
 }
 
 func main() {
