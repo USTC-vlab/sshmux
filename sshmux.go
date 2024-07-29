@@ -10,15 +10,18 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"slices"
 	"time"
 
+	"github.com/pires/go-proxyproto"
 	"golang.org/x/crypto/ssh"
 )
 
 type Config struct {
 	Address                string   `json:"address"`
+	ProxyCIDRs             []string `json:"proxy-protocol-allowed-cidrs"`
 	HostKeys               []string `json:"host-keys"`
 	API                    string   `json:"api"`
 	Token                  string   `json:"token"`
@@ -60,17 +63,19 @@ type AuthRequestPassword struct {
 }
 
 type AuthResponse struct {
-	Status     string `json:"status"`
-	Address    string `json:"address"`
-	PrivateKey string `json:"private_key"`
-	Cert       string `json:"cert"`
-	Id         int    `json:"vmid"`
+	Status        string `json:"status"`
+	Address       string `json:"address"`
+	PrivateKey    string `json:"private_key"`
+	Cert          string `json:"cert"`
+	Id            int    `json:"vmid"`
+	ProxyProtocol byte   `json:"proxy_protocol,omitempty"`
 }
 
 type UpstreamInformation struct {
-	Host     string
-	Signer   ssh.Signer
-	Password *string
+	Host          string
+	Signer        ssh.Signer
+	Password      *string
+	ProxyProtocol byte
 }
 
 func parsePrivateKey(key string, cert string) ssh.Signer {
@@ -127,6 +132,7 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 		upstream.Host = response.Address
 	}
 	upstream.Signer = parsePrivateKey(response.PrivateKey, response.Cert)
+	upstream.ProxyProtocol = response.ProxyProtocol
 	return &upstream, nil
 }
 
@@ -249,6 +255,13 @@ func handshake(session *ssh.PipeSession) error {
 	if err != nil {
 		return err
 	}
+	if upstream.ProxyProtocol > 0 {
+		header := proxyproto.HeaderProxyFromAddrs(upstream.ProxyProtocol, session.Downstream.RemoteAddr(), nil)
+		_, err := header.WriteTo(conn)
+		if err != nil {
+			return err
+		}
+	}
 	config := &ssh.ClientConfig{
 		User:            user,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -347,6 +360,63 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh cha
 	logCh <- *logMessage
 }
 
+func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstreams []netip.Prefix) {
+	// set up TCP listener
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(proxyUpstreams) > 0 {
+		listener = &proxyproto.Listener{
+			Listener: listener,
+			Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
+				// parse upstream address
+				upstreamAddrPort, err := netip.ParseAddrPort(upstream.String())
+				if err != nil {
+					return proxyproto.SKIP, nil
+				}
+				upstreamAddr := upstreamAddrPort.Addr()
+				// only read PROXY header from allowed CIDRs
+				for _, network := range proxyUpstreams {
+					if network.Contains(upstreamAddr) {
+						return proxyproto.USE, nil
+					}
+				}
+				// do nothing if upstream not in the allow list
+				return proxyproto.SKIP, nil
+			},
+		}
+	}
+	defer listener.Close()
+
+	// set up log channel
+	logCh := make(chan LogMessage, 256)
+	go runLogger(logCh)
+
+	// main handler loop
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Error on Accept: %s\n", err)
+			continue
+		}
+		go func() {
+			session, err := ssh.NewPipeSession(conn, sshConfig)
+			logMessage := LogMessage{
+				LoginTime: time.Now().Unix(),
+				ClientIp:  conn.RemoteAddr().String(),
+			}
+			if err != nil {
+				return
+			}
+			defer sendLogAndClose(&logMessage, session, logCh)
+			if err := runPipeSession(session, &logMessage); err != nil {
+				log.Println("runPipeSession:", err)
+			}
+		}()
+	}
+}
+
 func sshmuxServer(configFile string) {
 	configFileBytes, err := os.ReadFile(configFile)
 	if err != nil {
@@ -371,34 +441,15 @@ func sshmuxServer(configFile string) {
 		}
 		sshConfig.AddHostKey(key)
 	}
-	listener, err := net.Listen("tcp", config.Address)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer listener.Close()
-	logCh := make(chan LogMessage, 256)
-	go runLogger(logCh)
-	for {
-		conn, err := listener.Accept()
+	proxyUpstreams := make([]netip.Prefix, 0)
+	for _, cidr := range config.ProxyCIDRs {
+		network, err := netip.ParsePrefix(cidr)
 		if err != nil {
-			log.Printf("Error on Accept: %s\n", err)
-			continue
+			log.Fatal(err)
 		}
-		go func() {
-			session, err := ssh.NewPipeSession(conn, sshConfig)
-			logMessage := LogMessage{
-				LoginTime: time.Now().Unix(),
-				ClientIp:  conn.RemoteAddr().String(),
-			}
-			if err != nil {
-				return
-			}
-			defer sendLogAndClose(&logMessage, session, logCh)
-			if err := runPipeSession(session, &logMessage); err != nil {
-				log.Println("runPipeSession:", err)
-			}
-		}()
+		proxyUpstreams = append(proxyUpstreams, network)
 	}
+	sshmuxListenAddr(config.Address, sshConfig, proxyUpstreams)
 }
 
 func main() {

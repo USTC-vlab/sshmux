@@ -1,5 +1,8 @@
 {
     "address": "0.0.0.0:8022",
+    "proxy-protocol-allowed-cidrs": [
+        "127.0.0.22/32"
+    ],
     "host-keys": [
         "/tmp/sshmux/ssh_host_ed25519_key",
         "/tmp/sshmux/ssh_host_ecdsa_key",
