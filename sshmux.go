@@ -235,11 +235,8 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 	}
 	defer listener.Close()
 
-	// set up log channel
-	logCh := make(chan LogMessage, 256)
-	go runLogger(config.Logger, logCh)
-
 	// main handler loop
+	logger := makeLogger(config.Logger)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -255,7 +252,10 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 			if err != nil {
 				return
 			}
-			defer sendLogAndClose(&logMessage, session, logCh)
+			defer func() {
+				session.Close()
+				logger.sendLog(&logMessage)
+			}()
 			if err := runPipeSession(config, session, &logMessage); err != nil {
 				log.Println("runPipeSession:", err)
 			}

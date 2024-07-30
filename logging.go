@@ -5,8 +5,6 @@ import (
 	"log"
 	"net"
 	"time"
-
-	"golang.org/x/crypto/ssh"
 )
 
 type LogMessage struct {
@@ -17,25 +15,32 @@ type LogMessage struct {
 	Username       string `json:"user_name"`
 }
 
-func runLogger(logger string, ch <-chan LogMessage) {
-	conn, err := net.Dial("udp", logger)
-	if err != nil {
-		log.Printf("Logger Dial failed: %s\n", err)
-		// Drain the channel to avoid blocking
-		for range ch {
-		}
-	}
-	for logMessage := range ch {
-		jsonMsg, err := json.Marshal(logMessage)
-		if err != nil {
-			continue
-		}
-		conn.Write(jsonMsg)
-	}
+type Logger struct {
+	Channel chan LogMessage
 }
 
-func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh chan<- LogMessage) {
-	session.Close()
+func makeLogger(url string) Logger {
+	channel := make(chan LogMessage, 256)
+	go func() {
+		conn, err := net.Dial("udp", url)
+		if err != nil {
+			log.Printf("Logger Dial failed: %s\n", err)
+			// Drain the channel to avoid blocking
+			for range channel {
+			}
+		}
+		for logMessage := range channel {
+			jsonMsg, err := json.Marshal(logMessage)
+			if err != nil {
+				continue
+			}
+			conn.Write(jsonMsg)
+		}
+	}()
+	return Logger{Channel: channel}
+}
+
+func (l Logger) sendLog(logMessage *LogMessage) {
 	logMessage.DisconnectTime = time.Now().Unix()
-	logCh <- *logMessage
+	l.Channel <- *logMessage
 }
