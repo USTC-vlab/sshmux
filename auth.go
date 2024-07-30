@@ -12,6 +12,12 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+type RecoveryConfig struct {
+	Server   string   `json:"recovery-server"`
+	Username []string `json:"recovery-username"`
+	Token    string   `json:"token"`
+}
+
 type AuthRequestPublicKey struct {
 	AuthType      string `json:"auth_type"`
 	UnixUsername  string `json:"unix_username"`
@@ -66,12 +72,12 @@ func parsePrivateKey(key string, cert string) ssh.Signer {
 	return certSigner
 }
 
-func authUser(request any, username string, config Config) (*UpstreamInformation, error) {
+func authUser(request any, username string, api string, config RecoveryConfig) (*UpstreamInformation, error) {
 	payload := new(bytes.Buffer)
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return nil, err
 	}
-	res, err := http.Post(config.API, "application/json", payload)
+	res, err := http.Post(api, "application/json", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -91,8 +97,8 @@ func authUser(request any, username string, config Config) (*UpstreamInformation
 
 	var upstream UpstreamInformation
 	// FIXME: Can this be handled in API server?
-	if slices.Contains(config.RecoveryUsername, username) {
-		upstream.Host = config.RecoveryServer
+	if slices.Contains(config.Username, username) {
+		upstream.Host = config.Server
 		password := fmt.Sprintf("%d %s", response.Id, config.Token)
 		upstream.Password = &password
 	} else {
@@ -103,7 +109,7 @@ func authUser(request any, username string, config Config) (*UpstreamInformation
 	return &upstream, nil
 }
 
-func authUserWithPublicKey(key ssh.PublicKey, unixUsername string, config Config) (*UpstreamInformation, error) {
+func authUserWithPublicKey(key ssh.PublicKey, unixUsername string, api string, config RecoveryConfig) (*UpstreamInformation, error) {
 	keyType := key.Type()
 	keyData := base64.StdEncoding.EncodeToString(key.Marshal())
 	request := &AuthRequestPublicKey{
@@ -113,10 +119,10 @@ func authUserWithPublicKey(key ssh.PublicKey, unixUsername string, config Config
 		PublicKeyData: keyData,
 		Token:         config.Token,
 	}
-	return authUser(request, unixUsername, config)
+	return authUser(request, unixUsername, api, config)
 }
 
-func authUserWithUserPass(username string, password string, unixUsername string, config Config) (*UpstreamInformation, error) {
+func authUserWithUserPass(username string, password string, unixUsername string, api string, config RecoveryConfig) (*UpstreamInformation, error) {
 	request := &AuthRequestPassword{
 		AuthType:     "key",
 		Username:     username,
@@ -124,7 +130,7 @@ func authUserWithUserPass(username string, password string, unixUsername string,
 		UnixUsername: unixUsername,
 		Token:        config.Token,
 	}
-	return authUser(request, unixUsername, config)
+	return authUser(request, unixUsername, api, config)
 }
 
 func removePublicKeyMethod(methods []string) []string {
