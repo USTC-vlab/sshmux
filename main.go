@@ -4,10 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
-	"net/netip"
 	"os"
-
-	"golang.org/x/crypto/ssh"
 )
 
 func sshmuxServer(configFile string) {
@@ -20,30 +17,11 @@ func sshmuxServer(configFile string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	sshConfig := &ssh.ServerConfig{
-		ServerVersion:           "SSH-2.0-taokystrong",
-		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
+	sshmux, err := makeServer(config)
+	if err != nil {
+		log.Fatal(err)
 	}
-	for _, keyFile := range config.HostKeys {
-		bytes, err := os.ReadFile(keyFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		key, err := ssh.ParsePrivateKey(bytes)
-		if err != nil {
-			log.Fatal(err)
-		}
-		sshConfig.AddHostKey(key)
-	}
-	proxyUpstreams := make([]netip.Prefix, 0)
-	for _, cidr := range config.ProxyCIDRs {
-		network, err := netip.ParsePrefix(cidr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		proxyUpstreams = append(proxyUpstreams, network)
-	}
-	sshmuxListenAddr(config.Address, sshConfig, proxyUpstreams, config)
+	sshmux.ListenAddr(config.Address)
 }
 
 func main() {
