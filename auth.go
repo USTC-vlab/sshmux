@@ -66,7 +66,7 @@ func parsePrivateKey(key string, cert string) ssh.Signer {
 	return certSigner
 }
 
-func authUser(request any, username string) (*UpstreamInformation, error) {
+func authUser(request any, username string, config Config) (*UpstreamInformation, error) {
 	payload := new(bytes.Buffer)
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return nil, err
@@ -90,6 +90,7 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 	}
 
 	var upstream UpstreamInformation
+	// FIXME: Can this be handled in API server?
 	if slices.Contains(config.RecoveryUsername, username) {
 		upstream.Host = config.RecoveryServer
 		password := fmt.Sprintf("%d %s", response.Id, config.Token)
@@ -102,7 +103,7 @@ func authUser(request any, username string) (*UpstreamInformation, error) {
 	return &upstream, nil
 }
 
-func authUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInformation, error) {
+func authUserWithPublicKey(key ssh.PublicKey, unixUsername string, config Config) (*UpstreamInformation, error) {
 	keyType := key.Type()
 	keyData := base64.StdEncoding.EncodeToString(key.Marshal())
 	request := &AuthRequestPublicKey{
@@ -112,10 +113,10 @@ func authUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInf
 		PublicKeyData: keyData,
 		Token:         config.Token,
 	}
-	return authUser(request, unixUsername)
+	return authUser(request, unixUsername, config)
 }
 
-func authUserWithUserPass(username string, password string, unixUsername string) (*UpstreamInformation, error) {
+func authUserWithUserPass(username string, password string, unixUsername string, config Config) (*UpstreamInformation, error) {
 	request := &AuthRequestPassword{
 		AuthType:     "key",
 		Username:     username,
@@ -123,7 +124,7 @@ func authUserWithUserPass(username string, password string, unixUsername string)
 		UnixUsername: unixUsername,
 		Token:        config.Token,
 	}
-	return authUser(request, unixUsername)
+	return authUser(request, unixUsername, config)
 }
 
 func removePublicKeyMethod(methods []string) []string {

@@ -11,6 +11,7 @@ import (
 )
 
 func sshmuxServer(configFile string) {
+	var config Config
 	configFileBytes, err := os.ReadFile(configFile)
 	if err != nil {
 		log.Fatal(err)
@@ -42,7 +43,7 @@ func sshmuxServer(configFile string) {
 		}
 		proxyUpstreams = append(proxyUpstreams, network)
 	}
-	sshmuxListenAddr(config.Address, sshConfig, proxyUpstreams)
+	sshmuxListenAddr(config.Address, sshConfig, proxyUpstreams, config)
 }
 
 func main() {
