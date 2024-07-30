@@ -40,7 +40,7 @@ func makeLogger(url string) Logger {
 	return Logger{Channel: channel}
 }
 
-func (l Logger) sendLog(logMessage *LogMessage) {
+func (l Logger) SendLog(logMessage *LogMessage) {
 	logMessage.DisconnectTime = time.Now().Unix()
 	l.Channel <- *logMessage
 }

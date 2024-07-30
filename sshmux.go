@@ -270,7 +270,7 @@ func (s *Server) ListenAddr(address string) error {
 			}
 			defer func() {
 				session.Close()
-				s.Logger.sendLog(&logMessage)
+				s.Logger.SendLog(&logMessage)
 			}()
 			if err := s.RunPipeSession(session, &logMessage); err != nil {
 				log.Println("runPipeSession:", err)
