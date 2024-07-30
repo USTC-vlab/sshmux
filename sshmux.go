@@ -37,9 +37,7 @@ type LogMessage struct {
 	Username       string `json:"user_name"`
 }
 
-var config Config
-
-func handshake(session *ssh.PipeSession) error {
+func handshake(config Config, session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
 	var upstream *UpstreamInformation
@@ -69,7 +67,7 @@ func handshake(session *ssh.PipeSession) error {
 		if req.Method == "none" {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "publickey" && !req.IsPublicKeyQuery {
-			upstream, err = authUserWithPublicKey(*req.PublicKey, user)
+			upstream, err = authUserWithPublicKey(*req.PublicKey, user, config)
 			if err != nil {
 				return err
 			}
@@ -95,7 +93,7 @@ func handshake(session *ssh.PipeSession) error {
 			}
 			username := answers[0]
 			password := answers[1]
-			upstream, err = authUserWithUserPass(username, password, user)
+			upstream, err = authUserWithUserPass(username, password, user, config)
 			if err != nil {
 				return err
 			}
@@ -131,11 +129,11 @@ func handshake(session *ssh.PipeSession) error {
 			return err
 		}
 	}
-	config := &ssh.ClientConfig{
+	sshConfig := &ssh.ClientConfig{
 		User:            user,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	err = session.InitUpstream(conn, upstream.Host, config)
+	err = session.InitUpstream(conn, upstream.Host, sshConfig)
 	if err != nil {
 		return err
 	}
@@ -196,8 +194,8 @@ func handshake(session *ssh.PipeSession) error {
 	}
 }
 
-func runPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
-	err := handshake(session)
+func runPipeSession(config Config, session *ssh.PipeSession, logMessage *LogMessage) error {
+	err := handshake(config, session)
 	if err != nil {
 		return err
 	}
@@ -206,8 +204,8 @@ func runPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
 	return session.RunPipe()
 }
 
-func runLogger(ch <-chan LogMessage) {
-	conn, err := net.Dial("udp", config.Logger)
+func runLogger(logger string, ch <-chan LogMessage) {
+	conn, err := net.Dial("udp", logger)
 	if err != nil {
 		log.Printf("Logger Dial failed: %s\n", err)
 		// Drain the channel to avoid blocking
@@ -229,7 +227,7 @@ func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh cha
 	logCh <- *logMessage
 }
 
-func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstreams []netip.Prefix) {
+func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstreams []netip.Prefix, config Config) {
 	// set up TCP listener
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
@@ -260,7 +258,7 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 
 	// set up log channel
 	logCh := make(chan LogMessage, 256)
-	go runLogger(logCh)
+	go runLogger(config.Logger, logCh)
 
 	// main handler loop
 	for {
@@ -279,7 +277,7 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 				return
 			}
 			defer sendLogAndClose(&logMessage, session, logCh)
-			if err := runPipeSession(session, &logMessage); err != nil {
+			if err := runPipeSession(config, session, &logMessage); err != nil {
 				log.Println("runPipeSession:", err)
 			}
 		}()
