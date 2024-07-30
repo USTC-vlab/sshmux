@@ -12,12 +12,6 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type RecoveryConfig struct {
-	Server   string   `json:"recovery-server"`
-	Username []string `json:"recovery-username"`
-	Token    string   `json:"token"`
-}
-
 type AuthRequestPublicKey struct {
 	AuthType      string `json:"auth_type"`
 	UnixUsername  string `json:"unix_username"`
