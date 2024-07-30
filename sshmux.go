@@ -29,7 +29,7 @@ type Config struct {
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
 }
 
-func handshake(config Config, session *ssh.PipeSession) error {
+func handshake(config Config, authenticator Authenticator, session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
 	var upstream *UpstreamInformation
@@ -38,15 +38,6 @@ func handshake(config Config, session *ssh.PipeSession) error {
 		if err != nil {
 			return err
 		}
-	}
-	// Stage 0: Set up authenticator
-	authenticator := Authenticator{
-		Endpoint: config.API,
-		Recovery: RecoveryConfig{
-			Server:   config.RecoveryServer,
-			Username: config.RecoveryUsername,
-			Token:    config.Token,
-		},
 	}
 	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
 	for {
@@ -196,8 +187,8 @@ func handshake(config Config, session *ssh.PipeSession) error {
 	}
 }
 
-func runPipeSession(config Config, session *ssh.PipeSession, logMessage *LogMessage) error {
-	err := handshake(config, session)
+func runPipeSession(config Config, authenticator Authenticator, session *ssh.PipeSession, logMessage *LogMessage) error {
+	err := handshake(config, authenticator, session)
 	if err != nil {
 		return err
 	}
@@ -235,8 +226,11 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 	}
 	defer listener.Close()
 
-	// main handler loop
+	// set up resources
 	logger := makeLogger(config.Logger)
+	authenticator := makeAuthenticator(config)
+
+	// main handler loop
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -256,7 +250,7 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 				session.Close()
 				logger.sendLog(&logMessage)
 			}()
-			if err := runPipeSession(config, session, &logMessage); err != nil {
+			if err := runPipeSession(config, authenticator, session, &logMessage); err != nil {
 				log.Println("runPipeSession:", err)
 			}
 		}()
