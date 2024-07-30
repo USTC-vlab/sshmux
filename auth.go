@@ -55,6 +55,17 @@ type Authenticator struct {
 	Recovery RecoveryConfig
 }
 
+func makeAuthenticator(config Config) Authenticator {
+	return Authenticator{
+		Endpoint: config.API,
+		Recovery: RecoveryConfig{
+			Server:   config.RecoveryServer,
+			Username: config.RecoveryUsername,
+			Token:    config.Token,
+		},
+	}
+}
+
 func parsePrivateKey(key string, cert string) ssh.Signer {
 	if key == "" {
 		return nil
