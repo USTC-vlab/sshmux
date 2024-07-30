@@ -39,11 +39,14 @@ func handshake(config Config, session *ssh.PipeSession) error {
 			return err
 		}
 	}
-	// Compose RecoveryConfig
-	recoveryConfig := RecoveryConfig{
-		Server:   config.RecoveryServer,
-		Username: config.RecoveryUsername,
-		Token:    config.Token,
+	// Stage 0: Set up authenticator
+	authenticator := Authenticator{
+		Endpoint: config.API,
+		Recovery: RecoveryConfig{
+			Server:   config.RecoveryServer,
+			Username: config.RecoveryUsername,
+			Token:    config.Token,
+		},
 	}
 	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
 	for {
@@ -65,7 +68,7 @@ func handshake(config Config, session *ssh.PipeSession) error {
 		if req.Method == "none" {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "publickey" && !req.IsPublicKeyQuery {
-			upstream, err = authUserWithPublicKey(*req.PublicKey, user, config.API, recoveryConfig)
+			upstream, err = authenticator.AuthUserWithPublicKey(*req.PublicKey, user)
 			if err != nil {
 				return err
 			}
@@ -92,7 +95,7 @@ func handshake(config Config, session *ssh.PipeSession) error {
 			}
 			username := answers[0]
 			password := answers[1]
-			upstream, err = authUserWithUserPass(username, password, user, config.API, recoveryConfig)
+			upstream, err = authenticator.AuthUserWithUserPass(username, password, user)
 			if err != nil {
 				return err
 			}
