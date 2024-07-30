@@ -46,6 +46,7 @@ func sshmuxServer(configFile string) {
 }
 
 func main() {
+	var configFile string
 	flag.StringVar(&configFile, "c", "/etc/sshmux/config.json", "config file")
 	flag.Parse()
 	sshmuxServer(configFile)
