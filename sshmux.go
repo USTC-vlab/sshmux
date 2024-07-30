@@ -37,7 +37,6 @@ type LogMessage struct {
 	Username       string `json:"user_name"`
 }
 
-var configFile string
 var config Config
 
 func handshake(session *ssh.PipeSession) error {
