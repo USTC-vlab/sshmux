@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -14,10 +13,13 @@ import (
 )
 
 type Config struct {
-	Address                string   `json:"address"`
-	ProxyCIDRs             []string `json:"proxy-protocol-allowed-cidrs"`
-	HostKeys               []string `json:"host-keys"`
-	API                    string   `json:"api"`
+	Address    string   `json:"address"`
+	ProxyCIDRs []string `json:"proxy-protocol-allowed-cidrs"`
+	HostKeys   []string `json:"host-keys"`
+	API        string   `json:"api"`
+	Logger     string   `json:"logger"`
+	Banner     string   `json:"banner"`
+	// The following should be moved into API server
 	Token                  string   `json:"token"`
 	RecoveryServer         string   `json:"recovery-server"`
 	RecoveryUsername       []string `json:"recovery-username"`
@@ -25,16 +27,6 @@ type Config struct {
 	UsernameNoPassword     []string `json:"username-nopassword"`
 	InvalidUsername        []string `json:"invalid-username"`
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
-	Logger                 string   `json:"logger"`
-	Banner                 string   `json:"banner"`
-}
-
-type LogMessage struct {
-	LoginTime      int64  `json:"login_time"`
-	DisconnectTime int64  `json:"disconnect_time"`
-	ClientIp       string `json:"remote_ip"`
-	HostIp         string `json:"host_ip"`
-	Username       string `json:"user_name"`
 }
 
 func handshake(config Config, session *ssh.PipeSession) error {
@@ -82,6 +74,7 @@ func handshake(config Config, session *ssh.PipeSession) error {
 			}
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "keyboard-interactive" {
+			// FIXME: Can this be handled by API server?
 			requireUnixPassword := !config.AllUsernameNoPassword &&
 				!slices.Contains(config.RecoveryUsername, user) &&
 				!slices.Contains(config.UsernameNoPassword, user)
@@ -208,29 +201,6 @@ func runPipeSession(config Config, session *ssh.PipeSession, logMessage *LogMess
 	logMessage.Username = session.Downstream.User()
 	logMessage.HostIp = session.Upstream.RemoteAddr().String()
 	return session.RunPipe()
-}
-
-func runLogger(logger string, ch <-chan LogMessage) {
-	conn, err := net.Dial("udp", logger)
-	if err != nil {
-		log.Printf("Logger Dial failed: %s\n", err)
-		// Drain the channel to avoid blocking
-		for range ch {
-		}
-	}
-	for logMessage := range ch {
-		jsonMsg, err := json.Marshal(logMessage)
-		if err != nil {
-			continue
-		}
-		conn.Write(jsonMsg)
-	}
-}
-
-func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh chan<- LogMessage) {
-	session.Close()
-	logMessage.DisconnectTime = time.Now().Unix()
-	logCh <- *logMessage
 }
 
 func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstreams []netip.Prefix, config Config) {
