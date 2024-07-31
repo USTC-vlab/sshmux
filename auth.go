@@ -144,7 +144,7 @@ func (auth Authenticator) AuthUserWithUserPass(username string, password string,
 }
 
 func removePublicKeyMethod(methods []string) []string {
-	res := []string{}
+	res := make([]string, 0, len(methods))
 	for _, s := range methods {
 		if s != "publickey" {
 			res = append(res, s)
