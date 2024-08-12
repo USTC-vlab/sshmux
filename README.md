@@ -19,11 +19,11 @@ The table below shows the available options for `sshmux`:
 | Key         | Type       | Description                                                        | Required | Example                            |
 |-------------|------------|--------------------------------------------------------------------|----------|------------------------------------|
 | `address`   | `string`   | TCP host and port that `sshmux` will listen on.                    | `true`   | `"0.0.0.0:8022"`                   |
+| `host-keys` | `[]string` | Paths to SSH host key files with which `sshmux` identifies itself. | `true`   | `["/sshmux/ssh_host_ed25519_key"]` |
 | `api`       | `string`   | HTTP address that `sshmux` shall interact with.                    | `true`   | `"http://127.0.0.1:5000/ssh"`      |
 | `token`     | `string`   | Token used to authenticate with the API endpoint.                  | `true`   | `"long-and-random-token"`          |
 | `banner`    | `string`   | SSH banner to send to downstream.                                  | `false`  | `"Welcome to Vlab\n"`              |
 | `logger`    | `string`   | UDP host and port that `sshmux` send log messages to.              | `false`  | `"127.0.0.1:5556"`                 |
-| `host-keys` | `[]string` | Paths to SSH host key files with which `sshmux` identifies itself. | `true`   | `["/sshmux/ssh_host_ed25519_key"]` |
 | `proxy-protocol-allowed-cidrs` | `[]string` | CIDRs for which [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) is allowed. | `false` | `["127.0.0.22/32"]` |
 
 ### Advanced Config
@@ -53,9 +53,9 @@ The API accepts JSON input with the following keys:
 | `auth_type`       | `string` | The authentication type. Always set to `"key"` at the moment.                                          |
 | `username`        | `string` | Vlab username. Unset if the user is authenticating with public key.                                    |
 | `password`        | `string` | Vlab password. Unset if the user is authenticating with public key.                                    |
-| `unix_username`   | `string` | UNIX username the user is requesting access to.                                                        |
 | `public_key_type` | `string` | SSH public key type. Unset if the user is authenticating with username and password.                   |
 | `public_key_data` | `string` | Base64-encoded SSH public key payload. Unset if the user is authenticating with username and password. |
+| `unix_username`   | `string` | UNIX username the user is requesting access to.                                                        |
 | `token`           | `string` | Token used to authenticate the `sshmux` instance.                                                      |
 
 The API responds with JSON output with the following keys:
