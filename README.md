@@ -4,11 +4,11 @@
 
 ## Build, Run and Test
 
-`sshmux` requires a Go 1.21+ toolchain to build. You can use `go build -ldflags='-s -w'` or `make all` to get the `sshmux` binary directly in the directory.
+`sshmux` requires a Go 1.21+ toolchain to build. You can use `go build` or `make all` to get the `sshmux` binary directly in the directory.
 
 You can run the binary with `./sshmux`. Note that you'll need to provide a valid configuration file as described [here](#config).
 
-You can perform the unit test with `go test` or `make test`. Enable verbose logging with `go test -v`.
+You can perform the unit tests with `go test` or `make test`. Enable verbose logging with `go test -v`.
 
 ## Config
 
