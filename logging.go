@@ -25,6 +25,7 @@ func makeLogger(url string) Logger {
 		if url == "" {
 			for range channel {
 			}
+			return
 		}
 		conn, err := net.Dial("udp", url)
 		if err != nil {
@@ -32,6 +33,7 @@ func makeLogger(url string) Logger {
 			// Drain the channel to avoid blocking
 			for range channel {
 			}
+			return
 		}
 		for logMessage := range channel {
 			jsonMsg, err := json.Marshal(logMessage)
