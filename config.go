@@ -7,8 +7,9 @@ type Config struct {
 	API        string   `json:"api"`
 	Logger     string   `json:"logger"`
 	Banner     string   `json:"banner"`
+	Token      string   `json:"token"`
 	// The following should be moved into API server
-	Token                  string   `json:"token"`
+	RecoveryToken          string   `json:"recovery-token"`
 	RecoveryServer         string   `json:"recovery-server"`
 	RecoveryUsername       []string `json:"recovery-username"`
 	AllUsernameNoPassword  bool     `json:"all-username-nopassword"`

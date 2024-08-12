@@ -20,6 +20,7 @@ The table below shows the available options for `sshmux`:
 |-------------|------------|--------------------------------------------------------------------|----------|------------------------------------|
 | `address`   | `string`   | TCP host and port that `sshmux` will listen on.                    | `true`   | `"0.0.0.0:8022"`                   |
 | `api`       | `string`   | HTTP address that `sshmux` shall interact with.                    | `true`   | `"http://127.0.0.1:5000/ssh"`      |
+| `token`     | `string`   | Token used to authenticate with the API endpoint.                  | `true`   | `"long-and-random-token"`          |
 | `banner`    | `string`   | SSH banner to send to downstream.                                  | `false`  | `"Welcome to Vlab\n"`              |
 | `logger`    | `string`   | UDP host and port that `sshmux` send log messages to.              | `false`  | `"127.0.0.1:5556"`                 |
 | `host-keys` | `[]string` | Paths to SSH host key files with which `sshmux` identifies itself. | `true`   | `["/sshmux/ssh_host_ed25519_key"]` |
@@ -29,15 +30,15 @@ The table below shows the available options for `sshmux`:
 
 The table below shows extra options for `sshmux`, mainly for authentication with Vlab backends:
 
-| Key                        | Type       | Description                                                 | Example                      |
-|----------------------------|------------|-------------------------------------------------------------|------------------------------|
-| `token`                    | `string`   | Token used to authenticate with the recovery backend.       | `"long-and-random-token"`    |
-| `recovery-server`          | `string`   | SSH host and port of the recovery server.                   | `"172.30.0.101:2222"`        |
-| `recovery-username`        | `[]string` | Usernames dedicated to the recovery server.                 | `["recovery", "console"]`    |
-| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password. | `true`                       |
-| `username-nopassword`      | `[]string` | Usernames that won't be asked for UNIX password.            | `["vlab", "ubuntu", "root"]` |
-| `invalid-username`         | `[]string` | Usernames that are known to be invalid.                     | `["user"]`                   |
-| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.  | `"Invalid username %s."`     |
+| Key                        | Type       | Description                                                                | Example                      |
+|----------------------------|------------|----------------------------------------------------------------------------|------------------------------|
+| `recovery-token`           | `string`   | Token used to authenticate with the recovery backend. Defaults to `token`. | `"long-and-random-token"`    |
+| `recovery-server`          | `string`   | SSH host and port of the recovery server.                                  | `"172.30.0.101:2222"`        |
+| `recovery-username`        | `[]string` | Usernames dedicated to the recovery server.                                | `["recovery", "console"]`    |
+| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password.                | `true`                       |
+| `username-nopassword`      | `[]string` | Usernames that won't be asked for UNIX password.                           | `["vlab", "ubuntu", "root"]` |
+| `invalid-username`         | `[]string` | Usernames that are known to be invalid.                                    | `["user"]`                   |
+| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.                 | `"Invalid username %s."`     |
 
 All of these options can be left empty or unset, if the corresponding feature is not intended to be used.
 
@@ -55,7 +56,7 @@ The API accepts JSON input with the following keys:
 | `unix_username`   | `string` | UNIX username the user is requesting access to.                                                        |
 | `public_key_type` | `string` | SSH public key type. Unset if the user is authenticating with username and password.                   |
 | `public_key_data` | `string` | Base64-encoded SSH public key payload. Unset if the user is authenticating with username and password. |
-| `token`           | `string` | Token used to authenticate with the recovery backend.                                                  |
+| `token`           | `string` | Token used to authenticate the `sshmux` instance.                                                      |
 
 The API responds with JSON output with the following keys:
 

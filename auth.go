@@ -46,16 +46,22 @@ type UpstreamInformation struct {
 
 type Authenticator struct {
 	Endpoint string
+	Token    string
 	Recovery RecoveryConfig
 }
 
 func makeAuthenticator(config Config) Authenticator {
+	recoveryToken := config.RecoveryToken
+	if recoveryToken == "" {
+		recoveryToken = config.Token
+	}
 	return Authenticator{
 		Endpoint: config.API,
+		Token:    config.Token,
 		Recovery: RecoveryConfig{
 			Server:   config.RecoveryServer,
 			Username: config.RecoveryUsername,
-			Token:    config.Token,
+			Token:    recoveryToken,
 		},
 	}
 }
@@ -127,7 +133,7 @@ func (auth Authenticator) AuthUserWithPublicKey(key ssh.PublicKey, unixUsername 
 		UnixUsername:  unixUsername,
 		PublicKeyType: keyType,
 		PublicKeyData: keyData,
-		Token:         auth.Recovery.Token,
+		Token:         auth.Token,
 	}
 	return auth.AuthUser(request, unixUsername)
 }
@@ -138,7 +144,7 @@ func (auth Authenticator) AuthUserWithUserPass(username string, password string,
 		Username:     username,
 		Password:     password,
 		UnixUsername: unixUsername,
-		Token:        auth.Recovery.Token,
+		Token:        auth.Token,
 	}
 	return auth.AuthUser(request, unixUsername)
 }
