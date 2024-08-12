@@ -22,6 +22,10 @@ type Logger struct {
 func makeLogger(url string) Logger {
 	channel := make(chan LogMessage, 256)
 	go func() {
+		if url == "" {
+			for range channel {
+			}
+		}
 		conn, err := net.Dial("udp", url)
 		if err != nil {
 			log.Printf("Logger Dial failed: %s\n", err)
