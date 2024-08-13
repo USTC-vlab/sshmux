@@ -1,15 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/netip"
 	"os"
 	"slices"
@@ -19,163 +13,64 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type Config struct {
-	Address                string   `json:"address"`
-	ProxyCIDRs             []string `json:"proxy-protocol-allowed-cidrs"`
-	HostKeys               []string `json:"host-keys"`
-	API                    string   `json:"api"`
-	Token                  string   `json:"token"`
-	RecoveryServer         string   `json:"recovery-server"`
-	RecoveryUsername       []string `json:"recovery-username"`
-	AllUsernameNoPassword  bool     `json:"all-username-nopassword"`
-	UsernameNoPassword     []string `json:"username-nopassword"`
-	InvalidUsername        []string `json:"invalid-username"`
-	InvalidUsernameMessage string   `json:"invalid-username-message"`
-	Logger                 string   `json:"logger"`
-	Banner                 string   `json:"banner"`
+type Server struct {
+	Banner         string
+	SSHConfig      *ssh.ServerConfig
+	ProxyUpstreams []netip.Prefix
+	Authenticator  Authenticator
+	Logger         Logger
+	UsernamePolicy UsernamePolicyConfig
+	PasswordPolicy PasswordPolicyConfig
 }
 
-type LogMessage struct {
-	LoginTime      int64  `json:"login_time"`
-	DisconnectTime int64  `json:"disconnect_time"`
-	ClientIp       string `json:"remote_ip"`
-	HostIp         string `json:"host_ip"`
-	Username       string `json:"user_name"`
-}
-
-var configFile string
-var config Config
-
-type AuthRequestPublicKey struct {
-	AuthType      string `json:"auth_type"`
-	UnixUsername  string `json:"unix_username"`
-	PublicKeyType string `json:"public_key_type"`
-	PublicKeyData string `json:"public_key_data"`
-	Token         string `json:"token"`
-}
-
-type AuthRequestPassword struct {
-	AuthType     string `json:"auth_type"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	UnixUsername string `json:"unix_username"`
-	Token        string `json:"token"`
-}
-
-type AuthResponse struct {
-	Status        string `json:"status"`
-	Address       string `json:"address"`
-	PrivateKey    string `json:"private_key"`
-	Cert          string `json:"cert"`
-	Id            int    `json:"vmid"`
-	ProxyProtocol byte   `json:"proxy_protocol,omitempty"`
-}
-
-type UpstreamInformation struct {
-	Host          string
-	Signer        ssh.Signer
-	Password      *string
-	ProxyProtocol byte
-}
-
-func parsePrivateKey(key string, cert string) ssh.Signer {
-	if key == "" {
-		return nil
+func makeServer(config Config) (*Server, error) {
+	sshConfig := &ssh.ServerConfig{
+		ServerVersion:           "SSH-2.0-taokystrong",
+		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
 	}
-	signer, err := ssh.ParsePrivateKey([]byte(key))
-	if err != nil {
-		return nil
-	}
-	if cert == "" {
-		return signer
-	}
-	pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(cert))
-	if err != nil {
-		return signer
-	}
-	certSigner, err := ssh.NewCertSigner(pk.(*ssh.Certificate), signer)
-	if err != nil {
-		return signer
-	}
-	return certSigner
-}
-
-func authUser(request any, username string) (*UpstreamInformation, error) {
-	payload := new(bytes.Buffer)
-	if err := json.NewEncoder(payload).Encode(request); err != nil {
-		return nil, err
-	}
-	res, err := http.Post(config.API, "application/json", payload)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	var response AuthResponse
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		return nil, err
-	}
-	if response.Status != "ok" {
-		return nil, nil
-	}
-
-	var upstream UpstreamInformation
-	if slices.Contains(config.RecoveryUsername, username) {
-		upstream.Host = config.RecoveryServer
-		password := fmt.Sprintf("%d %s", response.Id, config.Token)
-		upstream.Password = &password
-	} else {
-		upstream.Host = response.Address
-	}
-	upstream.Signer = parsePrivateKey(response.PrivateKey, response.Cert)
-	upstream.ProxyProtocol = response.ProxyProtocol
-	return &upstream, nil
-}
-
-func authUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInformation, error) {
-	keyType := key.Type()
-	keyData := base64.StdEncoding.EncodeToString(key.Marshal())
-	request := &AuthRequestPublicKey{
-		AuthType:      "key",
-		UnixUsername:  unixUsername,
-		PublicKeyType: keyType,
-		PublicKeyData: keyData,
-		Token:         config.Token,
-	}
-	return authUser(request, unixUsername)
-}
-
-func authUserWithUserPass(username string, password string, unixUsername string) (*UpstreamInformation, error) {
-	request := &AuthRequestPassword{
-		AuthType:     "key",
-		Username:     username,
-		Password:     password,
-		UnixUsername: unixUsername,
-		Token:        config.Token,
-	}
-	return authUser(request, unixUsername)
-}
-
-func removePublicKeyMethod(methods []string) []string {
-	res := []string{}
-	for _, s := range methods {
-		if s != "publickey" {
-			res = append(res, s)
+	for _, keyFile := range config.HostKeys {
+		bytes, err := os.ReadFile(keyFile)
+		if err != nil {
+			return nil, err
 		}
+		key, err := ssh.ParsePrivateKey(bytes)
+		if err != nil {
+			return nil, err
+		}
+		sshConfig.AddHostKey(key)
 	}
-	return res
+	proxyUpstreams := make([]netip.Prefix, 0)
+	for _, cidr := range config.ProxyCIDRs {
+		network, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return nil, err
+		}
+		proxyUpstreams = append(proxyUpstreams, network)
+	}
+	sshmux := &Server{
+		Banner:         config.Banner,
+		SSHConfig:      sshConfig,
+		ProxyUpstreams: proxyUpstreams,
+		Authenticator:  makeAuthenticator(config),
+		Logger:         makeLogger(config.Logger),
+		UsernamePolicy: UsernamePolicyConfig{
+			InvalidUsername:        config.InvalidUsername,
+			InvalidUsernameMessage: config.InvalidUsernameMessage,
+		},
+		PasswordPolicy: PasswordPolicyConfig{
+			AllUsernameNoPassword: config.AllUsernameNoPassword,
+			UsernameNoPassword:    config.UsernameNoPassword,
+		},
+	}
+	return sshmux, nil
 }
 
-func handshake(session *ssh.PipeSession) error {
+func (s *Server) Handshake(session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
 	var upstream *UpstreamInformation
-	if config.Banner != "" {
-		err := session.Downstream.SendBanner(config.Banner)
+	if s.Banner != "" {
+		err := session.Downstream.SendBanner(s.Banner)
 		if err != nil {
 			return err
 		}
@@ -191,16 +86,16 @@ func handshake(session *ssh.PipeSession) error {
 			session.Downstream.SetUser(user)
 			hasSetUser = true
 		}
-		if slices.Contains(config.InvalidUsername, user) {
+		if slices.Contains(s.UsernamePolicy.InvalidUsername, user) {
 			// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
-			msg := fmt.Sprintf(config.InvalidUsernameMessage, user)
+			msg := fmt.Sprintf(s.UsernamePolicy.InvalidUsernameMessage, user)
 			session.Downstream.WriteDisconnectMsg(15, msg)
 			return fmt.Errorf("ssh: invalid username")
 		}
 		if req.Method == "none" {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "publickey" && !req.IsPublicKeyQuery {
-			upstream, err = authUserWithPublicKey(*req.PublicKey, user)
+			upstream, err = s.Authenticator.AuthUserWithPublicKey(*req.PublicKey, user)
 			if err != nil {
 				return err
 			}
@@ -209,9 +104,10 @@ func handshake(session *ssh.PipeSession) error {
 			}
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "keyboard-interactive" {
-			requireUnixPassword := !config.AllUsernameNoPassword &&
-				!slices.Contains(config.RecoveryUsername, user) &&
-				!slices.Contains(config.UsernameNoPassword, user)
+			// FIXME: Can this be handled by API server?
+			requireUnixPassword := !s.PasswordPolicy.AllUsernameNoPassword &&
+				!slices.Contains(s.Authenticator.Recovery.Username, user) &&
+				!slices.Contains(s.PasswordPolicy.UsernameNoPassword, user)
 			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 			interactiveEcho := []bool{true, false}
 
@@ -226,7 +122,7 @@ func handshake(session *ssh.PipeSession) error {
 			}
 			username := answers[0]
 			password := answers[1]
-			upstream, err = authUserWithUserPass(username, password, user)
+			upstream, err = s.Authenticator.AuthUserWithUserPass(username, password, user)
 			if err != nil {
 				return err
 			}
@@ -262,11 +158,11 @@ func handshake(session *ssh.PipeSession) error {
 			return err
 		}
 	}
-	config := &ssh.ClientConfig{
+	sshConfig := &ssh.ClientConfig{
 		User:            user,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	err = session.InitUpstream(conn, upstream.Host, config)
+	err = session.InitUpstream(conn, upstream.Host, sshConfig)
 	if err != nil {
 		return err
 	}
@@ -327,46 +223,13 @@ func handshake(session *ssh.PipeSession) error {
 	}
 }
 
-func runPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
-	err := handshake(session)
-	if err != nil {
-		return err
-	}
-	logMessage.Username = session.Downstream.User()
-	logMessage.HostIp = session.Upstream.RemoteAddr().String()
-	return session.RunPipe()
-}
-
-func runLogger(ch <-chan LogMessage) {
-	conn, err := net.Dial("udp", config.Logger)
-	if err != nil {
-		log.Printf("Logger Dial failed: %s\n", err)
-		// Drain the channel to avoid blocking
-		for range ch {
-		}
-	}
-	for logMessage := range ch {
-		jsonMsg, err := json.Marshal(logMessage)
-		if err != nil {
-			continue
-		}
-		conn.Write(jsonMsg)
-	}
-}
-
-func sendLogAndClose(logMessage *LogMessage, session *ssh.PipeSession, logCh chan<- LogMessage) {
-	session.Close()
-	logMessage.DisconnectTime = time.Now().Unix()
-	logCh <- *logMessage
-}
-
-func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstreams []netip.Prefix) {
+func (s *Server) ListenAddr(address string) error {
 	// set up TCP listener
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if len(proxyUpstreams) > 0 {
+	if len(s.ProxyUpstreams) > 0 {
 		listener = &proxyproto.Listener{
 			Listener: listener,
 			Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
@@ -377,7 +240,7 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 				}
 				upstreamAddr := upstreamAddrPort.Addr()
 				// only read PROXY header from allowed CIDRs
-				for _, network := range proxyUpstreams {
+				for _, network := range s.ProxyUpstreams {
 					if network.Contains(upstreamAddr) {
 						return proxyproto.USE, nil
 					}
@@ -389,10 +252,6 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 	}
 	defer listener.Close()
 
-	// set up log channel
-	logCh := make(chan LogMessage, 256)
-	go runLogger(logCh)
-
 	// main handler loop
 	for {
 		conn, err := listener.Accept()
@@ -401,7 +260,7 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 			continue
 		}
 		go func() {
-			session, err := ssh.NewPipeSession(conn, sshConfig)
+			session, err := ssh.NewPipeSession(conn, s.SSHConfig)
 			logMessage := LogMessage{
 				LoginTime: time.Now().Unix(),
 				ClientIp:  conn.RemoteAddr().String(),
@@ -409,51 +268,23 @@ func sshmuxListenAddr(address string, sshConfig *ssh.ServerConfig, proxyUpstream
 			if err != nil {
 				return
 			}
-			defer sendLogAndClose(&logMessage, session, logCh)
-			if err := runPipeSession(session, &logMessage); err != nil {
+			defer func() {
+				session.Close()
+				s.Logger.SendLog(&logMessage)
+			}()
+			if err := s.RunPipeSession(session, &logMessage); err != nil {
 				log.Println("runPipeSession:", err)
 			}
 		}()
 	}
 }
 
-func sshmuxServer(configFile string) {
-	configFileBytes, err := os.ReadFile(configFile)
+func (s *Server) RunPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
+	err := s.Handshake(session)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	err = json.Unmarshal(configFileBytes, &config)
-	if err != nil {
-		log.Fatal(err)
-	}
-	sshConfig := &ssh.ServerConfig{
-		ServerVersion:           "SSH-2.0-taokystrong",
-		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
-	}
-	for _, keyFile := range config.HostKeys {
-		bytes, err := os.ReadFile(keyFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		key, err := ssh.ParsePrivateKey(bytes)
-		if err != nil {
-			log.Fatal(err)
-		}
-		sshConfig.AddHostKey(key)
-	}
-	proxyUpstreams := make([]netip.Prefix, 0)
-	for _, cidr := range config.ProxyCIDRs {
-		network, err := netip.ParsePrefix(cidr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		proxyUpstreams = append(proxyUpstreams, network)
-	}
-	sshmuxListenAddr(config.Address, sshConfig, proxyUpstreams)
-}
-
-func main() {
-	flag.StringVar(&configFile, "c", "/etc/sshmux/config.json", "config file")
-	flag.Parse()
-	sshmuxServer(configFile)
+	logMessage.Username = session.Downstream.User()
+	logMessage.HostIp = session.Upstream.RemoteAddr().String()
+	return session.RunPipe()
 }
