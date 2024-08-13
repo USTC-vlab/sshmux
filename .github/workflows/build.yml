@@ -32,7 +32,9 @@ jobs:
       env:
         CGO_ENABLED: 0
     - name: Test
-      run: make test
+      run: |
+        sudo chmod -R a+r /etc/ssh/sshd_config.d
+        make test
       env:
         CGO_ENABLED: 0
     - uses: goreleaser/goreleaser-action@v6
