@@ -6,13 +6,13 @@
 
 `sshmux` requires a Go 1.21+ toolchain to build. You can use `go build` or `make` to get the `sshmux` binary directly in the directory.
 
-You can run the binary with `./sshmux`. Note that you'll need to provide a valid configuration file as described [here](#config).
+You can run the built binary with `./sshmux`. Note that you'll need to provide a valid configuration file as described [here](#config).
 
-You can perform the unit tests with `go test` or `make test`. Enable verbose logging with `go test -v`.
+You can perform unit tests with `go test` or `make test`. Enable verbose logging with `go test -v`.
 
 ## Config
 
-`sshmux` requires a JSON configuration file to start up. By default it will look at `/etc/sshmux/config.json`, but you can also specify a custom configuration by passing `-c path/to/config.json` in the command line arguments. An example [`config.example.json`](config.example.json) file is provided.
+`sshmux` requires a JSON configuration file to start up. By default it will look at `/etc/sshmux/config.json`, but you can also specify a custom configuration by passing `-c path/to/config.json` in the command line arguments. An [example](config.example.json) file is provided.
 
 The table below shows the available options for `sshmux`:
 
@@ -24,7 +24,7 @@ The table below shows the available options for `sshmux`:
 | `token`     | `string`   | Token used to authenticate with the API endpoint.                  | `true`   | `"long-and-random-token"`          |
 | `banner`    | `string`   | SSH banner to send to downstream.                                  | `false`  | `"Welcome to Vlab\n"`              |
 | `logger`    | `string`   | UDP host and port that `sshmux` send log messages to.              | `false`  | `"127.0.0.1:5556"`                 |
-| `proxy-protocol-allowed-cidrs` | `[]string` | CIDRs for which [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) is allowed. | `false` | `["127.0.0.22/32"]` |
+| `proxy-protocol-allowed-cidrs` | `[]string` | CIDRs from which [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) is allowed. | `false` | `["127.0.0.22/32"]` |
 
 ### Advanced Config
 
