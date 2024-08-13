@@ -10,6 +10,7 @@
     ],
     "api": "http://127.0.0.1:5000/ssh",
     "token": "token",
+    "recovery-token": "token",
     "recovery-server": "172.30.0.101:2222",
     "recovery-username": ["recovery", "console", "serial"],
     "all-username-nopassword": true,
