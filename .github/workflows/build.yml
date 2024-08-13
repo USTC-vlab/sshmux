@@ -50,7 +50,6 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          sshmux
           etc/config.example.json
           etc/sshmux.service
 
