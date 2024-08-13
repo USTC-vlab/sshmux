@@ -1,0 +1,54 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: sshmux
+    binary: sshmux
+    env:
+      - CGO_ENABLED=0
+    main: .
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+archives:
+  - format: binary
+    name_template: "{{ .Binary }}_{{ .Os  }}_{{ .Arch }}"
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+changelog:
+  use: github-native
+nfpms:
+  - id: default
+    package_name: sshmux
+    homepage: https://github.com/USTC-vlab/sshmux
+    maintainer: "USTC Vlab Team <vlab@ustc.edu.cn>"
+    description: |-
+      A reverse proxy for SSH
+    formats:
+      - deb
+    umask: 0o022
+    section: admin
+    priority: extra
+    scripts:
+      postinstall: etc/postinst.sh
+      preremove: etc/prerm.sh
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/sshmux/
+      - src: etc/config.example.json
+        dst: /etc/sshmux/
+      - src: etc/sshmux.service
+        dst: /lib/systemd/system/
+
+
+# modelines, feel free to remove those if you don't want/use them:
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj

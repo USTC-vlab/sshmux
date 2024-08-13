@@ -1,0 +1,14 @@
+[Unit]
+Description=A reverse proxy for SSH
+StartLimitIntervalSec=0
+ConditionPathExists=/etc/sshmux/config.json
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/sshmux -c /etc/sshmux/config.json
+WorkingDirectory=/etc/sshmux/
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
