@@ -247,29 +247,33 @@ func TestSSHClientConnection(t *testing.T) {
 	initEnv(t, baseDir)
 	privateKeyPath := filepath.Join(baseDir, "example_rsa")
 
-	// start sshmux server
-	sshmux, err := sshmuxServer("etc/config.example.toml")
-	if err != nil {
-		t.Fatal(err)
+	configFiles := []string{"config.toml", "config.json"}
+
+	for _, configFile := range configFiles {
+		// start sshmux server
+		sshmux, err := sshmuxServer(fmt.Sprintf("fixtures/%s", configFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = sshmux.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sshmux.Shutdown()
+
+		// sanity check
+		testWithSSHClient(t, sshdServerAddr, "sanity check", false, baseDir, privateKeyPath)
+
+		// test sshmux
+		testWithSSHClient(t, sshmuxServerAddr, "sshmux", false, baseDir, privateKeyPath)
+
+		// test sshmux with upstream proxy
+		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false, baseDir, privateKeyPath)
+
+		// test sshmux with downstream proxy
+		testWithSSHClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true, baseDir, privateKeyPath)
+
+		// test sshmux with two-way proxy
+		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true, baseDir, privateKeyPath)
 	}
-	err = sshmux.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sshmux.Shutdown()
-
-	// sanity check
-	testWithSSHClient(t, sshdServerAddr, "sanity check", false, baseDir, privateKeyPath)
-
-	// test sshmux
-	testWithSSHClient(t, sshmuxServerAddr, "sshmux", false, baseDir, privateKeyPath)
-
-	// test sshmux with upstream proxy
-	testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false, baseDir, privateKeyPath)
-
-	// test sshmux with downstream proxy
-	testWithSSHClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true, baseDir, privateKeyPath)
-
-	// test sshmux with two-way proxy
-	testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true, baseDir, privateKeyPath)
 }

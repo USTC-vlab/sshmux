@@ -1,0 +1,22 @@
+{
+    "address": "0.0.0.0:8022",
+    "proxy-protocol-allowed-cidrs": [
+        "127.0.0.22/32"
+    ],
+    "host-keys": [
+        "/tmp/sshmux/ssh_host_ed25519_key",
+        "/tmp/sshmux/ssh_host_ecdsa_key",
+        "/tmp/sshmux/ssh_host_rsa_key"
+    ],
+    "api": "http://127.0.0.1:5000/ssh",
+    "token": "token",
+    "recovery-token": "token",
+    "recovery-server": "172.30.0.101:2222",
+    "recovery-username": ["recovery", "console", "serial"],
+    "all-username-nopassword": true,
+    "username-nopassword": ["vlab", "ubuntu", "root"],
+    "invalid-username": ["用户名"],
+    "invalid-username-message": "Invalid username %s. Please check https://vlab.ustc.edu.cn/docs/login/ssh/#username for more information.",
+    "logger": "127.0.0.1:5556",
+    "banner": "Welcome to Vlab\n"
+}
