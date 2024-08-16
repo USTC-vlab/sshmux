@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 type SSHConfig struct {
 	Banner   string   `toml:"banner"`
 	HostKeys []string `toml:"host-keys"`
@@ -66,4 +68,38 @@ type UsernamePolicyConfig struct {
 type PasswordPolicyConfig struct {
 	AllUsernameNoPassword bool
 	UsernamesNoPassword   []string
+}
+
+func convertLegacyConfig(config LegacyConfig) Config {
+	if config.RecoveryToken == "" {
+		config.RecoveryToken = config.Token
+	}
+	return Config{
+		Address: config.Address,
+		SSH: SSHConfig{
+			Banner:   config.Banner,
+			HostKeys: config.HostKeys,
+		},
+		Auth: AuthConfig{
+			Endpoint:               config.API,
+			Token:                  config.Token,
+			InvalidUsernames:       config.InvalidUsername,
+			InvalidUsernameMessage: config.InvalidUsernameMessage,
+			AllUsernameNoPassword:  config.AllUsernameNoPassword,
+			UsernamesNoPassword:    config.UsernameNoPassword,
+		},
+		Logger: LoggerConfig{
+			Enabled:  config.Logger != "",
+			Endpoint: fmt.Sprintf("udp://%s", config.Logger),
+		},
+		ProxyProtocol: ProxyProtocolConfig{
+			Enabled:  len(config.ProxyCIDRs) > 0,
+			Networks: config.ProxyCIDRs,
+		},
+		Recovery: RecoveryConfig{
+			Address:   config.RecoveryServer,
+			Usernames: config.RecoveryUsername,
+			Token:     config.RecoveryToken,
+		},
+	}
 }

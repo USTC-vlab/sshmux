@@ -248,7 +248,7 @@ func TestSSHClientConnection(t *testing.T) {
 	privateKeyPath := filepath.Join(baseDir, "example_rsa")
 
 	// start sshmux server
-	sshmux, err := sshmuxServer("etc/config.example.json")
+	sshmux, err := sshmuxServer("etc/config.example.toml")
 	if err != nil {
 		t.Fatal(err)
 	}

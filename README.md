@@ -12,7 +12,7 @@ You can perform unit tests with `go test` or `make test`. Enable verbose logging
 
 ## Config
 
-`sshmux` requires a JSON configuration file to start up. By default it will look at `/etc/sshmux/config.json`, but you can also specify a custom configuration by passing `-c path/to/config.json` in the command line arguments. An [example](etc/config.example.json) file is provided.
+`sshmux` requires a JSON configuration file to start up. By default it will look at `/etc/sshmux/config.toml`, but you can also specify a custom configuration by passing `-c path/to/config.toml` in the command line arguments. An [example](etc/config.example.toml) file is provided.
 
 The table below shows the available options for `sshmux`:
 

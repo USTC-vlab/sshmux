@@ -43,7 +43,7 @@ nfpms:
     contents:
       - src: README.md
         dst: /usr/share/doc/sshmux/
-      - src: etc/config.example.json
+      - src: etc/config.example.toml
         dst: /etc/sshmux/
       - src: etc/sshmux.service
         dst: /lib/systemd/system/
