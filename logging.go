@@ -8,11 +8,13 @@ import (
 )
 
 type LogMessage struct {
-	LoginTime      int64  `json:"login_time"`
+	ConnectTime    int64  `json:"connect_time"`
 	DisconnectTime int64  `json:"disconnect_time"`
 	ClientIp       string `json:"remote_ip"`
 	HostIp         string `json:"host_ip"`
-	Username       string `json:"user_name"`
+	Username       string `json:"username"`
+	Authenticated  bool   `json:"authenticated"`
+	ClientType     string `json:"client_type"`
 }
 
 type Logger struct {

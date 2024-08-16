@@ -262,8 +262,11 @@ func (s *Server) ListenAddr(address string) error {
 		go func() {
 			session, err := ssh.NewPipeSession(conn, s.SSHConfig)
 			logMessage := LogMessage{
-				LoginTime: time.Now().Unix(),
-				ClientIp:  conn.RemoteAddr().String(),
+				ConnectTime:   time.Now().Unix(),
+				ClientIp:      conn.RemoteAddr().String(),
+				Username:      "", // should be provided by API server
+				ClientType:    "SSH",
+				Authenticated: true,
 			}
 			if err != nil {
 				return
