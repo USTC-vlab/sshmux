@@ -5,23 +5,35 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 func sshmuxServer(configFile string) (*Server, error) {
-	var config Config
-	configFileBytes, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil, err
+	if strings.HasSuffix(configFile, ".toml") {
+		var config Config
+		configFileBytes, err := os.ReadFile(configFile)
+		if err != nil {
+			return nil, err
+		}
+		err = toml.Unmarshal(configFileBytes, &config)
+		if err != nil {
+			return nil, err
+		}
+		return makeServer(config)
+	} else {
+		var legacyConfig LegacyConfig
+		configFileBytes, err := os.ReadFile(configFile)
+		if err != nil {
+			return nil, err
+		}
+		err = json.Unmarshal(configFileBytes, &legacyConfig)
+		if err != nil {
+			return nil, err
+		}
+		return makeLegacyServer(legacyConfig)
 	}
-	err = json.Unmarshal(configFileBytes, &config)
-	if err != nil {
-		log.Fatal(err)
-	}
-	sshmux, err := makeServer(config)
-	if err != nil {
-		return nil, err
-	}
-	return sshmux, nil
 }
 
 func main() {

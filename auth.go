@@ -50,19 +50,11 @@ type Authenticator struct {
 	Recovery RecoveryConfig
 }
 
-func makeAuthenticator(config Config) Authenticator {
-	recoveryToken := config.RecoveryToken
-	if recoveryToken == "" {
-		recoveryToken = config.Token
-	}
+func makeAuthenticator(auth AuthConfig, recovery RecoveryConfig) Authenticator {
 	return Authenticator{
-		Endpoint: config.API,
-		Token:    config.Token,
-		Recovery: RecoveryConfig{
-			Server:   config.RecoveryServer,
-			Username: config.RecoveryUsername,
-			Token:    recoveryToken,
-		},
+		Endpoint: auth.Endpoint,
+		Token:    auth.Token,
+		Recovery: recovery,
 	}
 }
 
@@ -113,8 +105,8 @@ func (auth Authenticator) AuthUser(request any, username string) (*UpstreamInfor
 
 	var upstream UpstreamInformation
 	// FIXME: Can this be handled in API server?
-	if slices.Contains(auth.Recovery.Username, username) {
-		upstream.Host = auth.Recovery.Server
+	if slices.Contains(auth.Recovery.Usernames, username) {
+		upstream.Host = auth.Recovery.Address
 		password := fmt.Sprintf("%d %s", response.Id, auth.Recovery.Token)
 		upstream.Password = &password
 	} else {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"slices"
 	"sync"
@@ -36,7 +37,7 @@ func makeServer(config Config) (*Server, error) {
 		ServerVersion:           "SSH-2.0-taokystrong",
 		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
 	}
-	for _, keyFile := range config.HostKeys {
+	for _, keyFile := range config.SSH.HostKeys {
 		bytes, err := os.ReadFile(keyFile)
 		if err != nil {
 			return nil, err
@@ -48,7 +49,7 @@ func makeServer(config Config) (*Server, error) {
 		sshConfig.AddHostKey(key)
 	}
 	proxyUpstreams := make([]netip.Prefix, 0)
-	for _, cidr := range config.ProxyCIDRs {
+	for _, cidr := range config.ProxyProtocol.Networks {
 		network, err := netip.ParsePrefix(cidr)
 		if err != nil {
 			return nil, err
@@ -56,27 +57,35 @@ func makeServer(config Config) (*Server, error) {
 		proxyUpstreams = append(proxyUpstreams, network)
 	}
 	var loggerEndpoint *net.Conn = nil
-	if config.Logger != "" {
-		conn, err := net.Dial("udp", config.Logger)
+	if config.Logger.Enabled {
+		loggerURL, err := url.Parse(config.Logger.Endpoint)
 		if err != nil {
-			log.Fatalf("Logger Dial failed: %s\n", err)
+			return nil, err
 		}
-		loggerEndpoint = &conn
+		if loggerURL.Scheme == "udp" {
+			conn, err := net.Dial("udp", loggerURL.Host)
+			if err != nil {
+				log.Fatalf("Logger Dial failed: %s\n", err)
+			}
+			loggerEndpoint = &conn
+		} else {
+			log.Fatalf("unsupported logger endpoint: %s\n", config.Logger.Endpoint)
+		}
 	}
 	sshmux := &Server{
 		Address:        config.Address,
-		Banner:         config.Banner,
+		Banner:         config.SSH.Banner,
 		SSHConfig:      sshConfig,
 		ProxyUpstreams: proxyUpstreams,
-		Authenticator:  makeAuthenticator(config),
+		Authenticator:  makeAuthenticator(config.Auth, config.Recovery),
 		LogWriter:      loggerEndpoint,
 		UsernamePolicy: UsernamePolicyConfig{
-			InvalidUsername:        config.InvalidUsername,
-			InvalidUsernameMessage: config.InvalidUsernameMessage,
+			InvalidUsernames:       config.Auth.InvalidUsernames,
+			InvalidUsernameMessage: config.Auth.InvalidUsernameMessage,
 		},
 		PasswordPolicy: PasswordPolicyConfig{
-			AllUsernameNoPassword: config.AllUsernameNoPassword,
-			UsernameNoPassword:    config.UsernameNoPassword,
+			AllUsernameNoPassword: config.Auth.AllUsernameNoPassword,
+			UsernamesNoPassword:   config.Auth.UsernamesNoPassword,
 		},
 	}
 	return sshmux, nil
@@ -139,6 +148,40 @@ func (s *Server) handler(conn net.Conn) {
 	}
 }
 
+func makeLegacyServer(config LegacyConfig) (*Server, error) {
+	if config.RecoveryToken == "" {
+		config.RecoveryToken = config.Token
+	}
+	return makeServer(Config{
+		Address: config.Address,
+		SSH: SSHConfig{
+			Banner:   config.Banner,
+			HostKeys: config.HostKeys,
+		},
+		Auth: AuthConfig{
+			Endpoint:               config.API,
+			Token:                  config.Token,
+			InvalidUsernames:       config.InvalidUsername,
+			InvalidUsernameMessage: config.InvalidUsernameMessage,
+			AllUsernameNoPassword:  config.AllUsernameNoPassword,
+			UsernamesNoPassword:    config.UsernameNoPassword,
+		},
+		Logger: LoggerConfig{
+			Enabled:  config.Logger != "",
+			Endpoint: fmt.Sprintf("udp://%s", config.Logger),
+		},
+		ProxyProtocol: ProxyProtocolConfig{
+			Enabled:  len(config.ProxyCIDRs) > 0,
+			Networks: config.ProxyCIDRs,
+		},
+		Recovery: RecoveryConfig{
+			Address:   config.RecoveryServer,
+			Usernames: config.RecoveryUsername,
+			Token:     config.RecoveryToken,
+		},
+	})
+}
+
 func (s *Server) Handshake(session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
@@ -160,7 +203,7 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			session.Downstream.SetUser(user)
 			hasSetUser = true
 		}
-		if slices.Contains(s.UsernamePolicy.InvalidUsername, user) {
+		if slices.Contains(s.UsernamePolicy.InvalidUsernames, user) {
 			// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
 			msg := fmt.Sprintf(s.UsernamePolicy.InvalidUsernameMessage, user)
 			session.Downstream.WriteDisconnectMsg(15, msg)
@@ -180,8 +223,8 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 		} else if req.Method == "keyboard-interactive" {
 			// FIXME: Can this be handled by API server?
 			requireUnixPassword := !s.PasswordPolicy.AllUsernameNoPassword &&
-				!slices.Contains(s.Authenticator.Recovery.Username, user) &&
-				!slices.Contains(s.PasswordPolicy.UsernameNoPassword, user)
+				!slices.Contains(s.Authenticator.Recovery.Usernames, user) &&
+				!slices.Contains(s.PasswordPolicy.UsernamesNoPassword, user)
 			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 			interactiveEcho := []bool{true, false}
 
