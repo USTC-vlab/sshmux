@@ -300,7 +300,7 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
 	err := s.Handshake(session)
 	if err != nil {
-		return make([]slog.Attr, 0), err
+		return nil, err
 	}
 	attrs := []slog.Attr{
 		slog.String("username", session.Downstream.User()),
