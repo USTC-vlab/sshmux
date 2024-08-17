@@ -458,9 +458,11 @@ func pipe(dst, src packetConn) error {
 func (s *PipeSession) RunPipe() error {
 	c := make(chan error)
 	go func() {
+		defer s.Downstream.transport.Close()
 		c <- pipe(s.Downstream.transport, s.Upstream.transport)
 	}()
 	go func() {
+		defer s.Upstream.transport.Close()
 		c <- pipe(s.Upstream.transport, s.Downstream.transport)
 	}()
 	return <-c
