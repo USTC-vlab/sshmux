@@ -7,11 +7,11 @@ import (
 	"os"
 )
 
-func sshmuxServer(configFile string) {
+func sshmuxServer(configFile string) (*Server, error) {
 	var config Config
 	configFileBytes, err := os.ReadFile(configFile)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	err = json.Unmarshal(configFileBytes, &config)
 	if err != nil {
@@ -19,14 +19,22 @@ func sshmuxServer(configFile string) {
 	}
 	sshmux, err := makeServer(config)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	sshmux.ListenAddr(config.Address)
+	return sshmux, nil
 }
 
 func main() {
 	var configFile string
 	flag.StringVar(&configFile, "c", "/etc/sshmux/config.json", "config file")
 	flag.Parse()
-	sshmuxServer(configFile)
+	sshmux, err := sshmuxServer(configFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = sshmux.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sshmux.Wait()
 }

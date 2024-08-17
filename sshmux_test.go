@@ -246,7 +246,17 @@ func TestSSHClientConnection(t *testing.T) {
 
 	initEnv(t, baseDir)
 	privateKeyPath := filepath.Join(baseDir, "example_rsa")
-	go sshmuxServer("etc/config.example.json")
+
+	// start sshmux server
+	sshmux, err := sshmuxServer("etc/config.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sshmux.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sshmux.Shutdown()
 
 	// sanity check
 	testWithSSHClient(t, sshdServerAddr, "sanity check", false, baseDir, privateKeyPath)
