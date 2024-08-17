@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	reuse "github.com/libp2p/go-reuseport"
 	"github.com/pires/go-proxyproto"
 	"golang.org/x/crypto/ssh"
 )
@@ -321,7 +322,7 @@ func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
 
 func (s *Server) Start() error {
 	// set up TCP listener
-	listener, err := net.Listen("tcp", s.Address)
+	listener, err := reuse.Listen("tcp", s.Address)
 	if err != nil {
 		return err
 	}
