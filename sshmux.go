@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"net/netip"
 	"os"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/pires/go-proxyproto"
@@ -14,6 +16,11 @@ import (
 )
 
 type Server struct {
+	listener       net.Listener
+	wg             sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
+	Address        string
 	Banner         string
 	SSHConfig      *ssh.ServerConfig
 	ProxyUpstreams []netip.Prefix
@@ -48,6 +55,7 @@ func makeServer(config Config) (*Server, error) {
 		proxyUpstreams = append(proxyUpstreams, network)
 	}
 	sshmux := &Server{
+		Address:        config.Address,
 		Banner:         config.Banner,
 		SSHConfig:      sshConfig,
 		ProxyUpstreams: proxyUpstreams,
@@ -63,6 +71,57 @@ func makeServer(config Config) (*Server, error) {
 		},
 	}
 	return sshmux, nil
+}
+
+func (s *Server) serve() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+			conn, err := s.listener.Accept()
+			if err != nil {
+				if s.ctx.Err() != nil {
+					// Context cancelled, stop accepting connections
+					return
+				}
+				log.Printf("Error on Accept: %s\n", err)
+				continue
+			}
+			s.wg.Add(1)
+			go s.handler(conn)
+		}
+	}
+}
+
+func (s *Server) handler(conn net.Conn) {
+	defer s.wg.Done()
+	defer conn.Close()
+
+	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
+	if err != nil {
+		return
+	}
+	defer session.Close()
+
+	logMessage := LogMessage{
+		ConnectTime:   time.Now().Unix(),
+		ClientIp:      conn.RemoteAddr().String(),
+		Username:      "", // should be provided by API server
+		ClientType:    "SSH",
+		Authenticated: true,
+	}
+	defer s.Logger.SendLog(&logMessage)
+
+	select {
+	case <-s.ctx.Done():
+		return
+	default:
+		if err := s.RunPipeSession(session, &logMessage); err != nil {
+			log.Println("runPipeSession:", err)
+		}
+	}
 }
 
 func (s *Server) Handshake(session *ssh.PipeSession) error {
@@ -223,11 +282,11 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 	}
 }
 
-func (s *Server) ListenAddr(address string) error {
+func (s *Server) Start() error {
 	// set up TCP listener
-	listener, err := net.Listen("tcp", address)
+	listener, err := net.Listen("tcp", s.Address)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if len(s.ProxyUpstreams) > 0 {
 		listener = &proxyproto.Listener{
@@ -250,36 +309,29 @@ func (s *Server) ListenAddr(address string) error {
 			},
 		}
 	}
-	defer listener.Close()
+
+	// set up server context
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.listener = listener
+	s.wg.Add(1)
 
 	// main handler loop
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Error on Accept: %s\n", err)
-			continue
-		}
-		go func() {
-			session, err := ssh.NewPipeSession(conn, s.SSHConfig)
-			logMessage := LogMessage{
-				ConnectTime:   time.Now().Unix(),
-				ClientIp:      conn.RemoteAddr().String(),
-				Username:      "", // should be provided by API server
-				ClientType:    "SSH",
-				Authenticated: true,
-			}
-			if err != nil {
-				return
-			}
-			defer func() {
-				session.Close()
-				s.Logger.SendLog(&logMessage)
-			}()
-			if err := s.RunPipeSession(session, &logMessage); err != nil {
-				log.Println("runPipeSession:", err)
-			}
-		}()
+	go s.serve()
+	return nil
+}
+
+func (s *Server) Wait() {
+	s.wg.Wait()
+}
+
+func (s *Server) Shutdown() {
+	if s.cancel != nil {
+		s.cancel()
 	}
+	if s.listener != nil {
+		s.listener.Close()
+	}
+	s.wg.Wait()
 }
 
 func (s *Server) RunPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
