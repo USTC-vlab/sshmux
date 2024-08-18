@@ -29,50 +29,42 @@ func localhostTCPAddr(port int) *net.TCPAddr {
 	}
 }
 
-func mustGenerateKey(t *testing.T, path, typ string) {
-	err := exec.Command("ssh-keygen", "-t", typ, "-f", path, "-N", "").Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-var examplePrivate string
 var enableProxy bool
 
-func sshAPIHandler(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Cannot read body", http.StatusBadRequest)
-		return
-	}
-	var dat map[string]interface{}
-	if err := json.Unmarshal(body, &dat); err != nil {
-		http.Error(w, "Not JSON", http.StatusBadRequest)
-		return
+func initHttp(sshPrivateKey []byte) {
+	sshAPIHandler := func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Cannot read body", http.StatusBadRequest)
+			return
+		}
+		var dat map[string]interface{}
+		if err := json.Unmarshal(body, &dat); err != nil {
+			http.Error(w, "Not JSON", http.StatusBadRequest)
+			return
+		}
+
+		res := &AuthResponse{
+			Status:     "ok",
+			Id:         1141919,
+			PrivateKey: string(sshPrivateKey),
+		}
+		if enableProxy {
+			res.Address = sshdProxiedAddr.String()
+			res.ProxyProtocol = 2
+		} else {
+			res.Address = sshdServerAddr.String()
+		}
+
+		jsonRes, err := json.Marshal(res)
+		if err != nil {
+			http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonRes)
 	}
 
-	res := &AuthResponse{
-		Status:     "ok",
-		Id:         1141919,
-		PrivateKey: examplePrivate,
-	}
-	if enableProxy {
-		res.Address = sshdProxiedAddr.String()
-		res.ProxyProtocol = 2
-	} else {
-		res.Address = sshdServerAddr.String()
-	}
-
-	jsonRes, err := json.Marshal(res)
-	if err != nil {
-		http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonRes)
-}
-
-func initHttp() {
 	http.HandleFunc("/ssh", sshAPIHandler)
 
 	if err := http.ListenAndServe(apiServerAddr.String(), nil); err != nil {
@@ -159,49 +151,46 @@ func initDownstreamProxyServer() {
 	}
 }
 
-func initEnv(t *testing.T, baseDir string) {
+func initEnv(t *testing.T) {
 	// SSHD privilege separation directory
 	os.MkdirAll("/run/sshd", 0o755)
-	// Create host keys for sshd
-	if err := os.RemoveAll(baseDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// t.Cleanup(func() {
-	// 	os.RemoveAll(baseDir)
-	// })
-	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_rsa_key"), "rsa")
-	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_ecdsa_key"), "ecdsa")
-	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_ed25519_key"), "ed25519")
 
-	examplePrivatePath := filepath.Join(baseDir, "example_rsa")
-	mustGenerateKey(t, examplePrivatePath, "rsa")
-	examplePrivateBytes, err := os.ReadFile(examplePrivatePath)
+	// Ensure private key permissions
+	keyFiles := []string{"ssh_host_ecdsa_key", "ssh_host_ed25519_key", "ssh_host_rsa_key", "ssh_id_rsa"}
+	for _, keyFile := range keyFiles {
+		err := os.Chmod(filepath.Join("fixtures", keyFile), 0o400)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Read SSH private key
+	privateKey, err := os.ReadFile("fixtures/ssh_id_rsa")
 	if err != nil {
 		t.Fatal(err)
 	}
-	examplePrivate = string(examplePrivateBytes)
 
 	// Setup API Server
-	go initHttp()
+	go initHttp(privateKey)
 	go initUpstreamProxyServer()
 	go initDownstreamProxyServer()
 }
 
-func onetimeSSHDServer(t *testing.T, baseDir string) *exec.Cmd {
+func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 	sshdPath, err := exec.LookPath("sshd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(
 		sshdPath, "-d",
-		"-h", filepath.Join(baseDir, "ssh_host_ed25519_key"),
+		"-h", filepath.Join(cwd, "fixtures/ssh_host_ed25519_key"),
 		"-p", fmt.Sprint(sshdServerAddr.Port),
-		"-o", "AuthorizedKeysFile="+filepath.Join(baseDir, "example_rsa.pub"),
+		"-o", "AuthorizedKeysFile="+filepath.Join(cwd, "fixtures/ssh_id_rsa.pub"),
 		"-o", "StrictModes=no")
-	cmd.Dir = baseDir
 	// Bind sshd to stderr, to quickly check if it goes wrong
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -220,38 +209,31 @@ func waitForSSHD(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func sshCommand(server *net.TCPAddr, privateKeyPath string) *exec.Cmd {
-	return exec.Command(
-		"ssh", "-p", fmt.Sprint(server.Port),
+func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+	enableProxy = proxy
+	cmd := onetimeSSHDServer(t)
+	time.Sleep(100 * time.Millisecond)
+	sshCommand := exec.Command(
+		"ssh", "-p", fmt.Sprint(address.Port),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ControlMaster=no",
-		"-i", privateKeyPath,
+		"-i", "fixtures/ssh_id_rsa",
 		"-o", "IdentityAgent=no",
-		server.IP.String(), "uname")
-}
-
-func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool, baseDir, privateKeyPath string) {
-	enableProxy = proxy
-	cmd := onetimeSSHDServer(t, baseDir)
-	time.Sleep(100 * time.Millisecond)
-	err := sshCommand(address, privateKeyPath).Run()
-	if err != nil {
+		address.IP.String(), "uname")
+	sshCommand.Dir, _ = os.Getwd()
+	if err := sshCommand.Run(); err != nil {
 		t.Fatal(fmt.Sprintf("%s: ", description), err)
 	}
 	waitForSSHD(t, cmd)
 }
 
 func TestSSHClientConnection(t *testing.T) {
-	baseDir := "/tmp/sshmux"
-
-	initEnv(t, baseDir)
-	privateKeyPath := filepath.Join(baseDir, "example_rsa")
-
+	initEnv(t)
 	configFiles := []string{"config.toml", "config.json"}
 
 	for _, configFile := range configFiles {
 		// start sshmux server
-		sshmux, err := sshmuxServer(fmt.Sprintf("fixtures/%s", configFile))
+		sshmux, err := sshmuxServer(filepath.Join("fixtures", configFile))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -262,18 +244,18 @@ func TestSSHClientConnection(t *testing.T) {
 		defer sshmux.Shutdown()
 
 		// sanity check
-		testWithSSHClient(t, sshdServerAddr, "sanity check", false, baseDir, privateKeyPath)
+		testWithSSHClient(t, sshdServerAddr, "sanity check", false)
 
 		// test sshmux
-		testWithSSHClient(t, sshmuxServerAddr, "sshmux", false, baseDir, privateKeyPath)
+		testWithSSHClient(t, sshmuxServerAddr, "sshmux", false)
 
 		// test sshmux with upstream proxy
-		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false, baseDir, privateKeyPath)
+		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false)
 
 		// test sshmux with downstream proxy
-		testWithSSHClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true, baseDir, privateKeyPath)
+		testWithSSHClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true)
 
 		// test sshmux with two-way proxy
-		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true, baseDir, privateKeyPath)
+		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
 	}
 }

@@ -4,9 +4,9 @@
         "127.0.0.22/32"
     ],
     "host-keys": [
-        "/tmp/sshmux/ssh_host_ed25519_key",
-        "/tmp/sshmux/ssh_host_ecdsa_key",
-        "/tmp/sshmux/ssh_host_rsa_key"
+        "fixtures/ssh_host_ed25519_key",
+        "fixtures/ssh_host_ecdsa_key",
+        "fixtures/ssh_host_rsa_key"
     ],
     "api": "http://127.0.0.1:5000/ssh",
     "token": "token",
