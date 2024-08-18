@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -25,7 +26,7 @@ type Server struct {
 	SSHConfig      *ssh.ServerConfig
 	ProxyUpstreams []netip.Prefix
 	Authenticator  Authenticator
-	Logger         Logger
+	LogWriter      *net.Conn
 	UsernamePolicy UsernamePolicyConfig
 	PasswordPolicy PasswordPolicyConfig
 }
@@ -54,13 +55,21 @@ func makeServer(config Config) (*Server, error) {
 		}
 		proxyUpstreams = append(proxyUpstreams, network)
 	}
+	var loggerEndpoint *net.Conn = nil
+	if config.Logger != "" {
+		conn, err := net.Dial("udp", config.Logger)
+		if err != nil {
+			log.Fatalf("Logger Dial failed: %s\n", err)
+		}
+		loggerEndpoint = &conn
+	}
 	sshmux := &Server{
 		Address:        config.Address,
 		Banner:         config.Banner,
 		SSHConfig:      sshConfig,
 		ProxyUpstreams: proxyUpstreams,
 		Authenticator:  makeAuthenticator(config),
-		Logger:         makeLogger(config.Logger),
+		LogWriter:      loggerEndpoint,
 		UsernamePolicy: UsernamePolicyConfig{
 			InvalidUsername:        config.InvalidUsername,
 			InvalidUsernameMessage: config.InvalidUsernameMessage,
@@ -105,21 +114,27 @@ func (s *Server) handler(conn net.Conn) {
 	}
 	defer session.Close()
 
-	logMessage := LogMessage{
-		ConnectTime:   time.Now().Unix(),
-		ClientIp:      conn.RemoteAddr().String(),
-		Username:      "", // should be provided by API server
-		ClientType:    "SSH",
-		Authenticated: true,
+	var logger *slog.Logger = nil
+	if s.LogWriter != nil {
+		logger = slog.New(slog.NewJSONHandler(*s.LogWriter, nil))
 	}
-	defer s.Logger.SendLog(&logMessage)
+	logger = logger.With(
+		slog.Int64("connect_time", time.Now().Unix()),
+		slog.String("remote_ip", conn.RemoteAddr().String()),
+		slog.String("client_type", "SSH"),
+	)
+	defer logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
 
 	select {
 	case <-s.ctx.Done():
 		return
 	default:
-		if err := s.RunPipeSession(session, &logMessage); err != nil {
+		attrs, err := s.RunPipeSession(session)
+		if err != nil {
 			log.Println("runPipeSession:", err)
+		}
+		for _, attr := range attrs {
+			logger = logger.With(attr)
 		}
 	}
 }
@@ -282,6 +297,19 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 	}
 }
 
+func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
+	err := s.Handshake(session)
+	if err != nil {
+		return nil, err
+	}
+	attrs := []slog.Attr{
+		slog.String("username", session.Downstream.User()),
+		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
+		slog.Bool("authenticated", true),
+	}
+	return attrs, session.RunPipe()
+}
+
 func (s *Server) Start() error {
 	// set up TCP listener
 	listener, err := net.Listen("tcp", s.Address)
@@ -332,14 +360,4 @@ func (s *Server) Shutdown() {
 		s.listener.Close()
 	}
 	s.wg.Wait()
-}
-
-func (s *Server) RunPipeSession(session *ssh.PipeSession, logMessage *LogMessage) error {
-	err := s.Handshake(session)
-	if err != nil {
-		return err
-	}
-	logMessage.Username = session.Downstream.User()
-	logMessage.HostIp = session.Upstream.RemoteAddr().String()
-	return session.RunPipe()
 }
