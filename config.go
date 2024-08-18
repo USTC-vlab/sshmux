@@ -3,7 +3,7 @@ package main
 import "fmt"
 
 type SSHConfig struct {
-	Banner   string   `toml:"banner"`
+	Banner   string   `toml:"banner,omitempty"`
 	HostKeys []string `toml:"host-keys"`
 }
 
@@ -11,20 +11,20 @@ type AuthConfig struct {
 	Endpoint string `toml:"endpoint"`
 	Token    string `toml:"token"`
 	// The following should be moved into API server
-	InvalidUsernames       []string `toml:"invalid-usernames"`
-	InvalidUsernameMessage string   `toml:"invalid-username-message"`
-	AllUsernameNoPassword  bool     `toml:"all-username-nopassword"`
-	UsernamesNoPassword    []string `toml:"usernames-nopassword"`
+	InvalidUsernames       []string `toml:"invalid-usernames,omitempty"`
+	InvalidUsernameMessage string   `toml:"invalid-username-message,omitempty"`
+	AllUsernameNoPassword  bool     `toml:"all-username-nopassword,omitempty"`
+	UsernamesNoPassword    []string `toml:"usernames-nopassword,omitempty"`
 }
 
 type LoggerConfig struct {
 	Enabled  bool   `toml:"enabled"`
-	Endpoint string `toml:"endpoint"`
+	Endpoint string `toml:"endpoint,omitempty"`
 }
 
 type ProxyProtocolConfig struct {
 	Enabled  bool     `toml:"enabled"`
-	Networks []string `toml:"networks"`
+	Networks []string `toml:"networks,omitempty"`
 }
 
 type RecoveryConfig struct {
