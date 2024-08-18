@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"log/slog"
@@ -33,17 +34,41 @@ type Server struct {
 	PasswordPolicy PasswordPolicyConfig
 }
 
+func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
+	if config.Path == "" && config.Base64 == "" && config.Content == "" {
+		return nil, fmt.Errorf("one of path, base64 or content of the SSH key must be set")
+	}
+	if (config.Path != "" && config.Base64 != "") || (config.Path != "" && config.Content != "") || (config.Base64 != "" && config.Content != "") {
+		return nil, fmt.Errorf("only one of path, base64 or content of the SSH key can be set")
+	}
+	var pemFile []byte
+	if config.Path != "" {
+		bytes, err := os.ReadFile(config.Path)
+		if err != nil {
+			return nil, err
+		}
+		pemFile = bytes
+	}
+	if config.Base64 != "" {
+		bytes, err := base64.StdEncoding.DecodeString(config.Base64)
+		if err != nil {
+			return nil, err
+		}
+		pemFile = bytes
+	}
+	if config.Content != "" {
+		pemFile = []byte(config.Content)
+	}
+	return ssh.ParsePrivateKey(pemFile)
+}
+
 func makeServer(config Config) (*Server, error) {
 	sshConfig := &ssh.ServerConfig{
 		ServerVersion:           "SSH-2.0-taokystrong",
 		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
 	}
-	for _, keyFile := range config.SSH.HostKeys {
-		bytes, err := os.ReadFile(keyFile)
-		if err != nil {
-			return nil, err
-		}
-		key, err := ssh.ParsePrivateKey(bytes)
+	for _, keyConf := range config.SSH.HostKeys {
+		key, err := validateKey(keyConf)
 		if err != nil {
 			return nil, err
 		}

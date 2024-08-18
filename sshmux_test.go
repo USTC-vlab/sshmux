@@ -169,9 +169,9 @@ func initEnv(t *testing.T, baseDir string) {
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		os.RemoveAll(baseDir)
-	})
+	// t.Cleanup(func() {
+	// 	os.RemoveAll(baseDir)
+	// })
 	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_rsa_key"), "rsa")
 	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_ecdsa_key"), "ecdsa")
 	mustGenerateKey(t, filepath.Join(baseDir, "ssh_host_ed25519_key"), "ed25519")

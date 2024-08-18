@@ -3,9 +3,9 @@ address = "0.0.0.0:8022"
 [ssh]
 banner = "Welcome to Vlab\n"
 host-keys = [
-    "/tmp/sshmux/ssh_host_ed25519_key",
-    "/tmp/sshmux/ssh_host_ecdsa_key",
-    "/tmp/sshmux/ssh_host_rsa_key",
+    { path = "/tmp/sshmux/ssh_host_ed25519_key" },
+    { path = "/tmp/sshmux/ssh_host_ecdsa_key" },
+    { path = "/tmp/sshmux/ssh_host_rsa_key" },
 ]
 
 [auth]

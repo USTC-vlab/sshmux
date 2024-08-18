@@ -3,8 +3,14 @@ package main
 import "fmt"
 
 type SSHConfig struct {
-	Banner   string   `toml:"banner,omitempty"`
-	HostKeys []string `toml:"host-keys"`
+	Banner   string         `toml:"banner,omitempty"`
+	HostKeys []SSHKeyConfig `toml:"host-keys"`
+}
+
+type SSHKeyConfig struct {
+	Path    string `toml:"path,omitempty"`
+	Base64  string `toml:"base64,omitempty"`
+	Content string `toml:"content,omitempty"`
 }
 
 type AuthConfig struct {
@@ -74,11 +80,15 @@ func convertLegacyConfig(config LegacyConfig) Config {
 	if config.RecoveryToken == "" {
 		config.RecoveryToken = config.Token
 	}
+	hostKeys := make([]SSHKeyConfig, 0, len(config.HostKeys))
+	for _, path := range config.HostKeys {
+		hostKeys = append(hostKeys, SSHKeyConfig{Path: path})
+	}
 	return Config{
 		Address: config.Address,
 		SSH: SSHConfig{
 			Banner:   config.Banner,
-			HostKeys: config.HostKeys,
+			HostKeys: hostKeys,
 		},
 		Auth: AuthConfig{
 			Endpoint:               config.API,
