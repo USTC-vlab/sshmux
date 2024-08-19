@@ -12,35 +12,68 @@ You can perform unit tests with `go test` or `make test`. Enable verbose logging
 
 ## Config
 
-`sshmux` requires a JSON configuration file to start up. By default it will look at `/etc/sshmux/config.toml`, but you can also specify a custom configuration by passing `-c path/to/config.toml` in the command line arguments. An [example](etc/config.example.toml) file is provided.
+`sshmux` requires a TOML configuration file to start up. By default it will look at `/etc/sshmux/config.toml`, but you can also specify a custom configuration by passing `-c path/to/config.toml` in the command line arguments. An [example](etc/config.example.toml) file is provided.
 
-The table below shows the available options for `sshmux`:
+The sections below will introduce available options for `sshmux`:
 
-| Key                            | Type       | Description                                                                                                                         | Required | Example                            |
-| ------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- |
-| `address`                      | `string`   | TCP host and port that `sshmux` will listen on.                                                                                     | `true`   | `"0.0.0.0:8022"`                   |
-| `host-keys`                    | `[]string` | Paths to SSH host key files with which `sshmux` identifies itself.                                                                  | `true`   | `["/sshmux/ssh_host_ed25519_key"]` |
-| `api`                          | `string`   | HTTP address that `sshmux` shall interact with.                                                                                     | `true`   | `"http://127.0.0.1:5000/ssh"`      |
-| `token`                        | `string`   | Token used to authenticate with the API endpoint.                                                                                   | `true`   | `"long-and-random-token"`          |
-| `banner`                       | `string`   | SSH banner to send to downstream.                                                                                                   | `false`  | `"Welcome to Vlab\n"`              |
-| `logger`                       | `string`   | UDP host and port that `sshmux` send log messages to.                                                                               | `false`  | `"127.0.0.1:5556"`                 |
-| `proxy-protocol-allowed-cidrs` | `[]string` | CIDRs from which [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) is allowed. | `false`  | `["127.0.0.22/32"]`                |
+### General Settings
 
-### Advanced Config
+General settings configure the `sshmux` service. They are top-level settings in the TOML file.
 
-The table below shows extra options for `sshmux`, mainly for authentication with Vlab backends:
+| Key       | Type     | Description                                     | Required | Example          |
+| --------- | -------- | ----------------------------------------------- | -------- | ---------------- |
+| `address` | `string` | TCP host and port that `sshmux` will listen on. | Yes      | `"0.0.0.0:8022"` |
 
-| Key                        | Type       | Description                                                                | Example                      |
-| -------------------------- | ---------- | -------------------------------------------------------------------------- | ---------------------------- |
-| `recovery-token`           | `string`   | Token used to authenticate with the recovery backend. Defaults to `token`. | `"long-and-random-token"`    |
-| `recovery-server`          | `string`   | SSH host and port of the recovery server.                                  | `"172.30.0.101:2222"`        |
-| `recovery-username`        | `[]string` | Usernames dedicated to the recovery server.                                | `["recovery", "console"]`    |
-| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password.                | `true`                       |
-| `username-nopassword`      | `[]string` | Usernames that won't be asked for UNIX password.                           | `["vlab", "ubuntu", "root"]` |
-| `invalid-username`         | `[]string` | Usernames that are known to be invalid.                                    | `["user"]`                   |
-| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.                 | `"Invalid username %s."`     |
+### SSH Settings
 
-All of these options can be omitted, if the corresponding feature is not intended to be used.
+SSH settings configure the integrated SSH server in `sshmux`. They are grouped under `ssh` in the TOML file.
+
+| Key         | Type       | Description                                                        | Required | Example                                            |
+| ----------- | ---------- | ------------------------------------------------------------------ | -------- | -------------------------------------------------- |
+| `banner`    | `string`   | SSH banner to send to downstream.                                  | No       | `"Welcome to Vlab\n"`                              |
+| `host-keys` | `[]SSHKey` | Paths to SSH host key files with which `sshmux` identifies itself. | Yes      | See [`fixtures/config.toml`](fixtures/config.toml) |
+
+### Auth Settings
+
+Auth settings configures the authentication and authorization API used by `sshmux`. They are grouped under `auth` in the TOML file.
+
+| Key                        | Type       | Description                                                                | Required | Example                       |
+| -------------------------- | ---------- | -------------------------------------------------------------------------- | -------- | ----------------------------- |
+| `endpoint`                 | `string`   | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"` |
+| `token`                    | `string`   | Token used to authenticate with the API endpoint.                          | Yes      | `"long-and-random-token"`     |
+| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password.                | No       | `true`                        |
+| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.                           | No       | `["vlab", "ubuntu", "root"]`  |
+| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                                    | No       | `["user"]`                    |
+| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.                 | No       | `"Invalid username %s."`      |
+
+### Logger Settings
+
+Logger settings configures the logger behavior of `sshmux`. They are grouped under `logger` in the TOML file.
+
+| Key        | Type     | Description                                                                   | Required               | Example                  |
+| ---------- | -------- | ----------------------------------------------------------------------------- | ---------------------- | ------------------------ |
+| `enabled`  | `bool`   | Whether the logger is enabled. Defaults to `false`.                           | No                     | `true`                   |
+| `endpoint` | `string` | Endpoint URL that `sshmux` will log onto. Only `udp` scheme is supported now. | If `enabled` is `true` | `"udp://127.0.0.1:5556"` |
+
+### PROXY Protocol Settings
+
+PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) support in `sshmux`. They are grouped under `proxy-protocol` in the TOML file.
+
+| Key        | Type       | Description                                                     | Required | Example                         |
+| ---------- | ---------- | --------------------------------------------------------------- | -------- | ------------------------------- |
+| `enabled`  | `bool`     | Whether PROXY protocol support is enabled. Defaults to `false`. | No       | `true`                          |
+| `hosts`    | `[]string` | Host names from which PROXY protocol is allowed.                | No       | `["nginx.local", "127.0.0.22"]` |
+| `networks` | `[]string` | Network CIDRs from which PROXY protocol is allowed.             | No       | `["10.10.0.0/24"]`              |
+
+### Recovery Settings
+
+Recovery settings configures Vlab recovery service support of `sshmux`. They are grouped under `recovery` in the TOML file.
+
+| Key         | Type       | Description                                           | Required | Example                   |
+| ----------- | ---------- | ----------------------------------------------------- | -------- | ------------------------- |
+| `address`   | `string`   | SSH host and port of the recovery server.             | No       | `"172.30.0.101:2222"`     |
+| `usernames` | `[]string` | Usernames dedicated to the recovery server.           | No       | `["recovery", "console"]` |
+| `token`     | `string`   | Token used to authenticate with the recovery backend. | No       | `"long-and-random-token"` |
 
 ## API server
 
