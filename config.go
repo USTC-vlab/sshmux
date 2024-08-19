@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"net/netip"
+)
 
 type SSHConfig struct {
 	Banner   string         `toml:"banner,omitempty"`
@@ -31,6 +34,7 @@ type LoggerConfig struct {
 type ProxyProtocolConfig struct {
 	Enabled  bool     `toml:"enabled"`
 	Networks []string `toml:"networks,omitempty"`
+	Hosts    []string `toml:"hosts,omitempty"`
 }
 
 type RecoveryConfig struct {
@@ -64,6 +68,11 @@ type LegacyConfig struct {
 	UsernameNoPassword     []string `json:"username-nopassword"`
 	InvalidUsername        []string `json:"invalid-username"`
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
+}
+
+type ProxyPolicyConfig struct {
+	AllowedCIDRs []netip.Prefix
+	AllowedHosts []string
 }
 
 type UsernamePolicyConfig struct {
@@ -112,4 +121,28 @@ func convertLegacyConfig(config LegacyConfig) Config {
 			Token:     config.RecoveryToken,
 		},
 	}
+}
+
+func convertProxyPolicyConfig(config ProxyProtocolConfig) (ProxyPolicyConfig, error) {
+	if !config.Enabled {
+		return ProxyPolicyConfig{}, nil
+	}
+	allowedCIDRs := make([]netip.Prefix, 0, len(config.Networks))
+	for _, cidr := range config.Networks {
+		network, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return ProxyPolicyConfig{}, err
+		}
+		allowedCIDRs = append(allowedCIDRs, network)
+	}
+	allowedHosts := make([]string, 0)
+	for _, host := range config.Hosts {
+		addr, err := netip.ParseAddr(host)
+		if err != nil {
+			allowedHosts = append(allowedHosts, host)
+			continue
+		}
+		allowedCIDRs = append(allowedCIDRs, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return ProxyPolicyConfig{AllowedCIDRs: allowedCIDRs, AllowedHosts: allowedHosts}, nil
 }

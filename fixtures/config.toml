@@ -33,7 +33,7 @@ endpoint = "udp://127.0.0.1:5556"
 
 [proxy-protocol]
 enabled = true
-networks = ["127.0.0.22/32"]
+hosts = ["127.0.0.22"]
 
 [recovery]
 address = "172.30.0.101:2222"

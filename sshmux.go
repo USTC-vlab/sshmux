@@ -27,9 +27,9 @@ type Server struct {
 	Address        string
 	Banner         string
 	SSHConfig      *ssh.ServerConfig
-	ProxyUpstreams []netip.Prefix
 	Authenticator  Authenticator
 	LogWriter      *net.Conn
+	ProxyPolicy    ProxyPolicyConfig
 	UsernamePolicy UsernamePolicyConfig
 	PasswordPolicy PasswordPolicyConfig
 }
@@ -74,13 +74,9 @@ func makeServer(config Config) (*Server, error) {
 		}
 		sshConfig.AddHostKey(key)
 	}
-	proxyUpstreams := make([]netip.Prefix, 0)
-	for _, cidr := range config.ProxyProtocol.Networks {
-		network, err := netip.ParsePrefix(cidr)
-		if err != nil {
-			return nil, err
-		}
-		proxyUpstreams = append(proxyUpstreams, network)
+	proxyPolicyConfig, err := convertProxyPolicyConfig(config.ProxyProtocol)
+	if err != nil {
+		return nil, err
 	}
 	var loggerEndpoint *net.Conn = nil
 	if config.Logger.Enabled {
@@ -99,12 +95,12 @@ func makeServer(config Config) (*Server, error) {
 		}
 	}
 	sshmux := &Server{
-		Address:        config.Address,
-		Banner:         config.SSH.Banner,
-		SSHConfig:      sshConfig,
-		ProxyUpstreams: proxyUpstreams,
-		Authenticator:  makeAuthenticator(config.Auth, config.Recovery),
-		LogWriter:      loggerEndpoint,
+		Address:       config.Address,
+		Banner:        config.SSH.Banner,
+		SSHConfig:     sshConfig,
+		Authenticator: makeAuthenticator(config.Auth, config.Recovery),
+		LogWriter:     loggerEndpoint,
+		ProxyPolicy:   proxyPolicyConfig,
 		UsernamePolicy: UsernamePolicyConfig{
 			InvalidUsernames:       config.Auth.InvalidUsernames,
 			InvalidUsernameMessage: config.Auth.InvalidUsernameMessage,
@@ -351,7 +347,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
-	if len(s.ProxyUpstreams) > 0 {
+	if len(s.ProxyPolicy.AllowedCIDRs) > 0 || len(s.ProxyPolicy.AllowedHosts) > 0 {
 		listener = &proxyproto.Listener{
 			Listener: listener,
 			Policy: func(upstream net.Addr) (proxyproto.Policy, error) {
@@ -361,10 +357,22 @@ func (s *Server) Start() error {
 					return proxyproto.SKIP, nil
 				}
 				upstreamAddr := upstreamAddrPort.Addr()
-				// only read PROXY header from allowed CIDRs
-				for _, network := range s.ProxyUpstreams {
+				// only read PROXY header from allowed CIDRs or hosts
+				for _, network := range s.ProxyPolicy.AllowedCIDRs {
 					if network.Contains(upstreamAddr) {
 						return proxyproto.USE, nil
+					}
+				}
+				for _, host := range s.ProxyPolicy.AllowedHosts {
+					ips, err := net.LookupIP(host)
+					if err != nil {
+						continue
+					}
+					for _, ip := range ips {
+						ipAddr, ok := netip.AddrFromSlice(ip)
+						if ok && ipAddr.Unmap() == upstreamAddr {
+							return proxyproto.USE, nil
+						}
 					}
 				}
 				// do nothing if upstream not in the allow list
