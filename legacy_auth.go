@@ -37,6 +37,14 @@ type LegacyAuthResponse struct {
 	ProxyProtocol byte   `json:"proxy_protocol,omitempty"`
 }
 
+type LegacyAuthUpstream struct {
+	Host          string
+	PrivateKey    string
+	Certificate   string
+	Password      *string
+	ProxyProtocol byte
+}
+
 type LegacyAuthenticator struct {
 	Endpoint       string
 	Token          string
@@ -62,7 +70,7 @@ func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAut
 }
 
 func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
-	var upstream *UpstreamInformation
+	var upstream *LegacyAuthUpstream
 	var err error
 	if slices.Contains(auth.UsernamePolicy.InvalidUsernames, username) {
 		// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
@@ -116,6 +124,8 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 	if upstream != nil {
 		auth_upstream := AuthUpstream{
 			Host:          upstream.Host,
+			PrivateKey:    upstream.PrivateKey,
+			Certificate:   upstream.Certificate,
 			Password:      upstream.Password,
 			ProxyProtocol: upstream.ProxyProtocol,
 		}
@@ -126,10 +136,10 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 		resp := AuthResponse{Upstream: &auth_upstream}
 		return 200, &resp, nil
 	}
-	return 403, nil, nil
+	return 403, &AuthResponse{}, nil
 }
 
-func (auth LegacyAuthenticator) AuthUser(request any, username string) (*UpstreamInformation, error) {
+func (auth LegacyAuthenticator) AuthUser(request any, username string) (*LegacyAuthUpstream, error) {
 	payload := new(bytes.Buffer)
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return nil, err
@@ -151,9 +161,7 @@ func (auth LegacyAuthenticator) AuthUser(request any, username string) (*Upstrea
 	if response.Status != "ok" {
 		return nil, nil
 	}
-
-	var upstream UpstreamInformation
-	// FIXME: Can this be handled in API server?
+	var upstream LegacyAuthUpstream
 	if slices.Contains(auth.Recovery.Usernames, username) {
 		upstream.Host = auth.Recovery.Address
 		password := fmt.Sprintf("%d %s", response.Id, auth.Recovery.Token)
@@ -161,12 +169,13 @@ func (auth LegacyAuthenticator) AuthUser(request any, username string) (*Upstrea
 	} else {
 		upstream.Host = response.Address
 	}
-	upstream.Signer = parsePrivateKey(response.PrivateKey, response.Cert)
+	upstream.PrivateKey = response.PrivateKey
+	upstream.Certificate = response.Cert
 	upstream.ProxyProtocol = response.ProxyProtocol
 	return &upstream, nil
 }
 
-func (auth LegacyAuthenticator) AuthUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*UpstreamInformation, error) {
+func (auth LegacyAuthenticator) AuthUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*LegacyAuthUpstream, error) {
 	keyType := key.Type()
 	keyData := base64.StdEncoding.EncodeToString(key.Marshal())
 	request := &LegacyAuthRequestPublicKey{
@@ -179,7 +188,7 @@ func (auth LegacyAuthenticator) AuthUserWithPublicKey(key ssh.PublicKey, unixUse
 	return auth.AuthUser(request, unixUsername)
 }
 
-func (auth LegacyAuthenticator) AuthUserWithUserPass(username string, password string, unixUsername string) (*UpstreamInformation, error) {
+func (auth LegacyAuthenticator) AuthUserWithUserPass(username string, password string, unixUsername string) (*LegacyAuthUpstream, error) {
 	request := &LegacyAuthRequestPassword{
 		AuthType:     "key",
 		Username:     username,

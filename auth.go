@@ -1,6 +1,14 @@
 package main
 
-import "golang.org/x/crypto/ssh"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+
+	"golang.org/x/crypto/ssh"
+)
 
 type AuthRequest struct {
 	Method    string            `json:"method"`
@@ -27,8 +35,8 @@ type AuthChallengeField struct {
 
 type AuthFailure struct {
 	Message    string `json:"message"`
-	Reason     uint32 `json:"reason,omitempty"`
 	Disconnect bool   `json:"disconnect,omitempty"`
+	Reason     uint32 `json:"reason,omitempty"`
 }
 
 type AuthUpstream struct {
@@ -41,6 +49,37 @@ type AuthUpstream struct {
 
 type Authenticator interface {
 	Auth(request AuthRequest, username string) (int, *AuthResponse, error)
+}
+
+type RESTfulAuthenticator struct {
+	Endpoint string
+	Version  string
+}
+
+func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+	if auth.Version != "v1" {
+		return 500, nil, fmt.Errorf("unsupported API version: %s", auth.Version)
+	}
+	url := fmt.Sprintf("%s/v1/auth/%s", auth.Endpoint, username)
+	payload := new(bytes.Buffer)
+	if err := json.NewEncoder(payload).Encode(request); err != nil {
+		return 0, nil, err
+	}
+	res, err := http.Post(url, "application/json", payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return res.StatusCode, nil, err
+	}
+	var response AuthResponse
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		return res.StatusCode, nil, err
+	}
+	return res.StatusCode, &response, nil
 }
 
 func removePublicKeyMethod(methods []string) []string {

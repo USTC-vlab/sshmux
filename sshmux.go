@@ -11,7 +11,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"slices"
 	"sync"
 	"time"
 
@@ -28,7 +27,7 @@ type Server struct {
 	Address       string
 	Banner        string
 	SSHConfig     *ssh.ServerConfig
-	Authenticator LegacyAuthenticator
+	Authenticator Authenticator
 	LogWriter     io.Writer
 	ProxyPolicy   ProxyPolicyConfig
 }
@@ -107,7 +106,7 @@ func makeServer(config Config) (*Server, error) {
 		Address:       config.Address,
 		Banner:        config.SSH.Banner,
 		SSHConfig:     sshConfig,
-		Authenticator: authenticator,
+		Authenticator: &authenticator,
 		LogWriter:     logWriter,
 		ProxyPolicy:   proxyPolicyConfig,
 	}
@@ -179,74 +178,76 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 		}
 	}
 	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
+auth_requests:
 	for {
-		req, err := session.Downstream.ReadAuthRequest(true)
+		authReq, err := session.Downstream.ReadAuthRequest(true)
 		if err != nil {
 			return err
 		}
 		if !hasSetUser {
-			user = req.User
+			user = authReq.User
 			session.Downstream.SetUser(user)
 			hasSetUser = true
 		}
-		if slices.Contains(s.Authenticator.UsernamePolicy.InvalidUsernames, user) {
-			// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
-			msg := fmt.Sprintf(s.Authenticator.UsernamePolicy.InvalidUsernameMessage, user)
-			session.Downstream.WriteDisconnectMsg(15, msg)
-			return fmt.Errorf("ssh: invalid username")
+		req := AuthRequest{Method: authReq.Method}
+		if authReq.Method == "publickey" && !authReq.IsPublicKeyQuery {
+			req.PublicKey = string(ssh.MarshalAuthorizedKey(*authReq.PublicKey))
 		}
-		if req.Method == "none" {
-			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
-		} else if req.Method == "publickey" && !req.IsPublicKeyQuery {
-			upstream, err = s.Authenticator.AuthUserWithPublicKey(*req.PublicKey, user)
+		for {
+			status, resp, err := s.Authenticator.Auth(req, user)
 			if err != nil {
 				return err
 			}
-			if upstream != nil {
-				break
-			}
-			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
-		} else if req.Method == "keyboard-interactive" {
-			// FIXME: Can this be handled by API server?
-			requireUnixPassword := !s.Authenticator.PasswordPolicy.AllUsernameNoPassword &&
-				!slices.Contains(s.Authenticator.Recovery.Usernames, user) &&
-				!slices.Contains(s.Authenticator.PasswordPolicy.UsernamesNoPassword, user)
-			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
-			interactiveEcho := []bool{true, false}
-
-			answers, err := session.Downstream.InteractiveChallenge("",
-				"Please enter Vlab username & password.",
-				interactiveQuestions, interactiveEcho)
-			if err != nil {
-				return err
-			}
-			if len(answers) != len(interactiveQuestions) {
-				return fmt.Errorf("ssh: numbers of answers and questions do not match")
-			}
-			username := answers[0]
-			password := answers[1]
-			upstream, err = s.Authenticator.AuthUserWithUserPass(username, password, user)
-			if err != nil {
-				return err
-			}
-			if upstream != nil {
-				if requireUnixPassword {
-					answers, err := session.Downstream.InteractiveChallenge("",
-						"Please enter UNIX password.",
-						[]string{"UNIX password: "}, []bool{false})
+			switch status {
+			case 200:
+				upstreamResp := *resp.Upstream
+				upstream = &UpstreamInformation{
+					Host:          upstreamResp.Host,
+					Signer:        parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate),
+					Password:      upstreamResp.Password,
+					ProxyProtocol: upstreamResp.ProxyProtocol,
+				}
+				break auth_requests
+			case 401:
+				for _, challenge := range resp.Challenges {
+					questions := make([]string, 0, len(challenge.Fields))
+					withEcho := make([]bool, 0, len(challenge.Fields))
+					for _, field := range challenge.Fields {
+						questions = append(questions, field.Prompt)
+						withEcho = append(withEcho, !field.Secret)
+					}
+					answers, err := session.Downstream.InteractiveChallenge("", challenge.Instruction, questions, withEcho)
 					if err != nil {
 						return err
 					}
-					if len(answers) != 1 {
-						return fmt.Errorf("ssh: expected UNIX password")
+					if len(answers) != len(questions) {
+						return fmt.Errorf("ssh: numbers of answers and questions do not match")
 					}
-					upstream.Password = &answers[0]
+					if req.Payload == nil {
+						req.Payload = make(map[string]string, len(challenge.Fields))
+					}
+					for i, answer := range answers {
+						req.Payload[challenge.Fields[i].Key] = answer
+					}
 				}
-				break
+				continue
+			case 403:
+				if resp.Failure != nil {
+					failure := *resp.Failure
+					if failure.Disconnect {
+						if failure.Reason == 0 {
+							// 11: SSH_DISCONNECT_BY_APPLICATION
+							failure.Reason = 11
+						}
+						session.Downstream.WriteDisconnectMsg(failure.Reason, failure.Message)
+						return fmt.Errorf("ssh(%d): %s", failure.Reason, failure.Message)
+					}
+				}
+				fallthrough
+			default:
+				session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
+				continue auth_requests
 			}
-			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
-		} else {
-			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		}
 	}
 	// Stage 2: connect to upstream
