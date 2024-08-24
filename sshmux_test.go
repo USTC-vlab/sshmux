@@ -44,7 +44,7 @@ func initHttp(sshPrivateKey []byte) {
 			return
 		}
 
-		res := &AuthResponse{
+		res := &LegacyAuthResponse{
 			Status:     "ok",
 			Id:         1141919,
 			PrivateKey: string(sshPrivateKey),

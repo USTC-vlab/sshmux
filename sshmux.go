@@ -28,7 +28,7 @@ type Server struct {
 	Address        string
 	Banner         string
 	SSHConfig      *ssh.ServerConfig
-	Authenticator  Authenticator
+	Authenticator  LegacyAuthenticator
 	LogWriter      io.Writer
 	ProxyPolicy    ProxyPolicyConfig
 	UsernamePolicy UsernamePolicyConfig
@@ -101,7 +101,7 @@ func makeServer(config Config) (*Server, error) {
 		Address:       config.Address,
 		Banner:        config.SSH.Banner,
 		SSHConfig:     sshConfig,
-		Authenticator: makeAuthenticator(config.Auth, config.Recovery),
+		Authenticator: makeLegacyAuthenticator(config.Auth, config.Recovery),
 		LogWriter:     logWriter,
 		ProxyPolicy:   proxyPolicyConfig,
 		UsernamePolicy: UsernamePolicyConfig{
