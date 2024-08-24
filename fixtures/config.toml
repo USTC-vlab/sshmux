@@ -20,8 +20,9 @@ path = "fixtures/ssh_host_rsa_key"
 
 [auth]
 endpoint = "http://127.0.0.1:5000/ssh"
-token = "token"
+version = "legacy"
 # Legacy settings
+token = "token"
 all-username-nopassword = true
 usernames-nopassword = ["vlab", "ubuntu", "root"]
 invalid-usernames = ["用户名"]

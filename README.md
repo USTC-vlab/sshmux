@@ -37,14 +37,22 @@ SSH settings configure the integrated SSH server in `sshmux`. They are grouped u
 
 Auth settings configures the authentication and authorization API used by `sshmux`. They are grouped under `auth` in the TOML file.
 
-| Key                        | Type       | Description                                                                | Required | Example                       |
-| -------------------------- | ---------- | -------------------------------------------------------------------------- | -------- | ----------------------------- |
-| `endpoint`                 | `string`   | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"` |
-| `token`                    | `string`   | Token used to authenticate with the API endpoint.                          | Yes      | `"long-and-random-token"`     |
-| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password.                | No       | `true`                        |
-| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.                           | No       | `["vlab", "ubuntu", "root"]`  |
-| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                                    | No       | `["user"]`                    |
-| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.                 | No       | `"Invalid username %s."`      |
+| Key        | Type     | Description                                                                | Required | Example                       |
+| ---------- | -------- | -------------------------------------------------------------------------- | -------- | ----------------------------- |
+| `endpoint` | `string` | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"` |
+| `version`  | `string` | Auth endpoint API version (`legacy`, `v1`). Defaults to `legacy`.          | No       | `"v1"`                        |
+
+#### Legacy Auth Settings
+
+The following settings are only used with `legacy` auth APIs. They are also grouped under `auth` in the TOML file.
+
+| Key                        | Type       | Description                                                 | Required                 | Example                      |
+| -------------------------- | ---------- | ----------------------------------------------------------- | ------------------------ | ---------------------------- |
+| `token`                    | `string`   | Token used to authenticate with the API endpoint.           | If `version` is `legacy` | `"long-and-random-token"`    |
+| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password. | No                       | `true`                       |
+| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.            | No                       | `["vlab", "ubuntu", "root"]` |
+| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                     | No                       | `["user"]`                   |
+| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.  | No                       | `"Invalid username %s."`     |
 
 ### Logger Settings
 

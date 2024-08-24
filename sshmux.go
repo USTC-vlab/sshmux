@@ -101,12 +101,18 @@ func makeServer(config Config) (*Server, error) {
 	} else {
 		logWriter = io.Discard
 	}
-	authenticator := makeLegacyAuthenticator(config.Auth, config.Recovery)
+	var authenticator Authenticator
+	if config.Auth.Version == "" || config.Auth.Version == "legacy" {
+		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery)
+		authenticator = &legacyAuthenticator
+	} else {
+		authenticator = makeAuthenticator(config.Auth)
+	}
 	sshmux := &Server{
 		Address:       config.Address,
 		Banner:        config.SSH.Banner,
 		SSHConfig:     sshConfig,
-		Authenticator: &authenticator,
+		Authenticator: authenticator,
 		LogWriter:     logWriter,
 		ProxyPolicy:   proxyPolicyConfig,
 	}

@@ -52,6 +52,16 @@ type Authenticator interface {
 	Auth(request AuthRequest, username string) (int, *AuthResponse, error)
 }
 
+func makeAuthenticator(auth AuthConfig) Authenticator {
+	if auth.Version == "" {
+		auth.Version = "v1"
+	}
+	return &RESTfulAuthenticator{
+		Endpoint: auth.Endpoint,
+		Version:  auth.Version,
+	}
+}
+
 type RESTfulAuthenticator struct {
 	Endpoint string
 	Version  string

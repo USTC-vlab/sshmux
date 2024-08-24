@@ -18,8 +18,9 @@ type SSHKeyConfig struct {
 
 type AuthConfig struct {
 	Endpoint string `toml:"endpoint"`
-	Token    string `toml:"token"`
-	// The following should be moved into API server
+	Version  string `toml:"version,omitempty"`
+	// The following settings are for legacy API only
+	Token                  string   `toml:"token,omitempty"`
 	InvalidUsernames       []string `toml:"invalid-usernames,omitempty"`
 	InvalidUsernameMessage string   `toml:"invalid-username-message,omitempty"`
 	AllUsernameNoPassword  bool     `toml:"all-username-nopassword,omitempty"`
@@ -38,9 +39,9 @@ type ProxyProtocolConfig struct {
 }
 
 type RecoveryConfig struct {
-	Address   string   `toml:"address"`
-	Usernames []string `toml:"usernames"`
-	Token     string   `toml:"token"`
+	Address   string   `toml:"address,omitempty"`
+	Usernames []string `toml:"usernames,omitempty"`
+	Token     string   `toml:"token,omitempty"`
 }
 
 type Config struct {
@@ -101,6 +102,7 @@ func convertLegacyConfig(config LegacyConfig) Config {
 		},
 		Auth: AuthConfig{
 			Endpoint:               config.API,
+			Version:                "legacy",
 			Token:                  config.Token,
 			InvalidUsernames:       config.InvalidUsername,
 			InvalidUsernameMessage: config.InvalidUsernameMessage,
