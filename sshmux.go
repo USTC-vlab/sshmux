@@ -219,10 +219,19 @@ auth_requests:
 					upstreamResp.Port = 22
 				}
 				upstream = &UpstreamInformation{
-					Host:          netip.AddrPortFrom(host, upstreamResp.Port).String(),
-					Signer:        parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate),
-					Password:      upstreamResp.Password,
-					ProxyProtocol: upstreamResp.ProxyProtocol,
+					Host:     netip.AddrPortFrom(host, upstreamResp.Port).String(),
+					Signer:   parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate),
+					Password: upstreamResp.Password,
+				}
+				if upstreamResp.ProxyProtocol != nil {
+					switch *upstreamResp.ProxyProtocol {
+					case "v1":
+						upstream.ProxyProtocol = 1
+					case "v2":
+						upstream.ProxyProtocol = 2
+					default:
+						return fmt.Errorf("unknown PROXY protocol version: %s", *upstreamResp.ProxyProtocol)
+					}
 				}
 				break auth_requests
 			case 401:

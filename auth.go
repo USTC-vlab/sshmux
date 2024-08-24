@@ -46,7 +46,7 @@ type AuthUpstream struct {
 	PrivateKey    string  `json:"private_key,omitempty"`
 	Certificate   string  `json:"certificate,omitempty"`
 	Password      *string `json:"password,omitempty"`
-	ProxyProtocol byte    `json:"proxy_protocol,omitempty"`
+	ProxyProtocol *string `json:"proxy_protocol,omitempty"`
 }
 
 type Authenticator interface {

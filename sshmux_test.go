@@ -82,9 +82,10 @@ func initHttp(sshPrivateKey []byte) {
 			PrivateKey: string(sshPrivateKey),
 		}
 		if enableProxy {
+			proxyProtocol := "v2"
 			upstream.Host = sshdProxiedAddr.IP.String()
 			upstream.Port = uint16(sshdProxiedAddr.Port)
-			upstream.ProxyProtocol = 2
+			upstream.ProxyProtocol = &proxyProtocol
 		} else {
 			upstream.Host = sshdServerAddr.IP.String()
 			upstream.Port = uint16(sshdServerAddr.Port)
