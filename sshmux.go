@@ -92,11 +92,11 @@ func makeServer(config Config) (*Server, error) {
 		if loggerURL.Scheme == "udp" {
 			conn, err := net.Dial("udp", loggerURL.Host)
 			if err != nil {
-				log.Fatalf("Logger Dial failed: %s\n", err)
+				return nil, fmt.Errorf("logger dial failed: %s", err)
 			}
 			logWriter = conn
 		} else {
-			log.Fatalf("unsupported logger endpoint: %s\n", config.Logger.Endpoint)
+			return nil, fmt.Errorf("unsupported logger endpoint: %s", config.Logger.Endpoint)
 		}
 	} else {
 		logWriter = io.Discard
