@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"slices"
 
 	"golang.org/x/crypto/ssh"
@@ -122,8 +123,13 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 		}
 	}
 	if upstream != nil {
+		address, err := netip.ParseAddrPort(upstream.Host)
+		if err != nil {
+			return 500, nil, err
+		}
 		auth_upstream := AuthUpstream{
-			Host:          upstream.Host,
+			Host:          address.Addr().String(),
+			Port:          address.Port(),
 			PrivateKey:    upstream.PrivateKey,
 			Certificate:   upstream.Certificate,
 			Password:      upstream.Password,

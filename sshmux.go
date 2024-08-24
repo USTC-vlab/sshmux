@@ -201,8 +201,15 @@ auth_requests:
 			switch status {
 			case 200:
 				upstreamResp := *resp.Upstream
+				host, err := netip.ParseAddr(upstreamResp.Host)
+				if err != nil {
+					return err
+				}
+				if upstreamResp.Port == 0 {
+					upstreamResp.Port = 22
+				}
 				upstream = &UpstreamInformation{
-					Host:          upstreamResp.Host,
+					Host:          netip.AddrPortFrom(host, upstreamResp.Port).String(),
 					Signer:        parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate),
 					Password:      upstreamResp.Password,
 					ProxyProtocol: upstreamResp.ProxyProtocol,
