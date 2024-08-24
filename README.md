@@ -37,10 +37,11 @@ SSH settings configure the integrated SSH server in `sshmux`. They are grouped u
 
 Auth settings configures the authentication and authorization API used by `sshmux`. They are grouped under `auth` in the TOML file.
 
-| Key        | Type     | Description                                                                | Required | Example                       |
-| ---------- | -------- | -------------------------------------------------------------------------- | -------- | ----------------------------- |
-| `endpoint` | `string` | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"` |
-| `version`  | `string` | Auth endpoint API version (`legacy`, `v1`). Defaults to `legacy`.          | No       | `"v1"`                        |
+| Key        | Type           | Description                                                                | Required | Example                                            |
+| ---------- | -------------- | -------------------------------------------------------------------------- | -------- | -------------------------------------------------- |
+| `endpoint` | `string`       | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"`                      |
+| `version`  | `string`       | Auth endpoint API version (`legacy`, `v1`). Defaults to `legacy`.          | No       | `"v1"`                                             |
+| `headers`  | `[]HTTPHeader` | Extra HTTP headers to send to API server.                                  | No       | See [`fixtures/config.toml`](fixtures/config.toml) |
 
 #### Legacy Auth Settings
 

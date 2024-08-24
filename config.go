@@ -17,14 +17,20 @@ type SSHKeyConfig struct {
 }
 
 type AuthConfig struct {
-	Endpoint string `toml:"endpoint"`
-	Version  string `toml:"version,omitempty"`
+	Endpoint string                 `toml:"endpoint"`
+	Version  string                 `toml:"version,omitempty"`
+	Headers  []AuthHTTPHeaderConfig `toml:"headers,omitempty"`
 	// The following settings are for legacy API only
 	Token                  string   `toml:"token,omitempty"`
 	InvalidUsernames       []string `toml:"invalid-usernames,omitempty"`
 	InvalidUsernameMessage string   `toml:"invalid-username-message,omitempty"`
 	AllUsernameNoPassword  bool     `toml:"all-username-nopassword,omitempty"`
 	UsernamesNoPassword    []string `toml:"usernames-nopassword,omitempty"`
+}
+
+type AuthHTTPHeaderConfig struct {
+	Name  string `toml:"name"`
+	Value string `toml:"value"`
 }
 
 type LoggerConfig struct {

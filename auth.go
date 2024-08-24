@@ -56,15 +56,21 @@ func makeAuthenticator(auth AuthConfig) Authenticator {
 	if auth.Version == "" {
 		auth.Version = "v1"
 	}
+	headers := http.Header{}
+	for _, header := range auth.Headers {
+		headers.Add(header.Name, header.Value)
+	}
 	return &RESTfulAuthenticator{
 		Endpoint: auth.Endpoint,
 		Version:  auth.Version,
+		Headers:  headers,
 	}
 }
 
 type RESTfulAuthenticator struct {
 	Endpoint string
 	Version  string
+	Headers  http.Header
 }
 
 func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
@@ -76,7 +82,12 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return 0, nil, err
 	}
-	res, err := http.Post(url, "application/json", payload)
+	req, err := http.NewRequest("POST", url, payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header = auth.Headers
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

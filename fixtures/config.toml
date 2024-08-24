@@ -21,6 +21,9 @@ path = "fixtures/ssh_host_rsa_key"
 [auth]
 endpoint = "http://127.0.0.1:5000"
 version = "v1"
+headers = [
+    { name = "Authorization", value = "ApiKey 12345678" },
+]
 
 [logger]
 enabled = false
