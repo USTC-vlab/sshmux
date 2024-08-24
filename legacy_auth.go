@@ -38,9 +38,11 @@ type LegacyAuthResponse struct {
 }
 
 type LegacyAuthenticator struct {
-	Endpoint string
-	Token    string
-	Recovery RecoveryConfig
+	Endpoint       string
+	Token          string
+	Recovery       RecoveryConfig
+	UsernamePolicy UsernamePolicyConfig
+	PasswordPolicy PasswordPolicyConfig
 }
 
 func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAuthenticator {
@@ -48,7 +50,83 @@ func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAut
 		Endpoint: auth.Endpoint,
 		Token:    auth.Token,
 		Recovery: recovery,
+		UsernamePolicy: UsernamePolicyConfig{
+			InvalidUsernames:       auth.InvalidUsernames,
+			InvalidUsernameMessage: auth.InvalidUsernameMessage,
+		},
+		PasswordPolicy: PasswordPolicyConfig{
+			AllUsernameNoPassword: auth.AllUsernameNoPassword,
+			UsernamesNoPassword:   auth.UsernamesNoPassword,
+		},
 	}
+}
+
+func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+	var upstream *UpstreamInformation
+	var err error
+	if slices.Contains(auth.UsernamePolicy.InvalidUsernames, username) {
+		// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
+		msg := fmt.Sprintf(auth.UsernamePolicy.InvalidUsernameMessage, username)
+		failure := AuthFailure{Message: msg, Reason: 15, Disconnect: true}
+		return 403, &AuthResponse{Failure: &failure}, nil
+	}
+	if request.Method == "publickey" {
+		publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(request.PublicKey))
+		if err != nil {
+			return 500, nil, err
+		}
+		upstream, err = auth.AuthUserWithPublicKey(publicKey, username)
+		if err != nil {
+			return 500, nil, err
+		}
+	}
+	if request.Method == "keyboard-interactive" {
+		requireUnixPassword := !auth.PasswordPolicy.AllUsernameNoPassword &&
+			!slices.Contains(auth.Recovery.Usernames, username) &&
+			!slices.Contains(auth.PasswordPolicy.UsernamesNoPassword, username)
+		username, has_username := request.Payload["username"]
+		password, has_password := request.Payload["password"]
+		if !has_username || !has_password {
+			challenge := AuthChallenge{
+				Instruction: "Please enter Vlab username & password.",
+				Fields: []AuthChallengeField{
+					{Key: "username", Prompt: "Vlab username (Student ID): "},
+					{Key: "password", Prompt: "Vlab password: ", Secret: true},
+				},
+			}
+			resp := AuthResponse{Challenges: []AuthChallenge{challenge}}
+			return 401, &resp, nil
+		}
+		_, has_unix_password := request.Payload["unix_password"]
+		if requireUnixPassword && !has_unix_password {
+			challenge := AuthChallenge{
+				Instruction: "Please enter UNIX password.",
+				Fields: []AuthChallengeField{
+					{Key: "unix_password", Prompt: "UNIX password: ", Secret: true},
+				},
+			}
+			resp := AuthResponse{Challenges: []AuthChallenge{challenge}}
+			return 401, &resp, nil
+		}
+		upstream, err = auth.AuthUserWithUserPass(username, password, username)
+		if err != nil {
+			return 500, nil, err
+		}
+	}
+	if upstream != nil {
+		auth_upstream := AuthUpstream{
+			Host:          upstream.Host,
+			Password:      upstream.Password,
+			ProxyProtocol: upstream.ProxyProtocol,
+		}
+		unix_password, has_unix_password := request.Payload["unix_password"]
+		if has_unix_password {
+			auth_upstream.Password = &unix_password
+		}
+		resp := AuthResponse{Upstream: &auth_upstream}
+		return 200, &resp, nil
+	}
+	return 403, nil, nil
 }
 
 func (auth LegacyAuthenticator) AuthUser(request any, username string) (*UpstreamInformation, error) {

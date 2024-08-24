@@ -2,11 +2,45 @@ package main
 
 import "golang.org/x/crypto/ssh"
 
-type UpstreamInformation struct {
-	Host          string
-	Signer        ssh.Signer
-	Password      *string
-	ProxyProtocol byte
+type AuthRequest struct {
+	Method    string            `json:"method"`
+	PublicKey string            `json:"public_key,omitempty"`
+	Payload   map[string]string `json:"payload"`
+}
+
+type AuthResponse struct {
+	Challenges []AuthChallenge `json:"challenges,omitempty"`
+	Failure    *AuthFailure    `json:"failure,omitempty"`
+	Upstream   *AuthUpstream   `json:"upstream,omitempty"`
+}
+
+type AuthChallenge struct {
+	Instruction string               `json:"instruction"`
+	Fields      []AuthChallengeField `json:"fields"`
+}
+
+type AuthChallengeField struct {
+	Key    string `json:"key"`
+	Prompt string `json:"prompt"`
+	Secret bool   `json:"secret"`
+}
+
+type AuthFailure struct {
+	Message    string `json:"message"`
+	Reason     uint32 `json:"reason,omitempty"`
+	Disconnect bool   `json:"disconnect,omitempty"`
+}
+
+type AuthUpstream struct {
+	Host          string  `json:"host"`
+	PrivateKey    string  `json:"private_key,omitempty"`
+	Certificate   string  `json:"certificate,omitempty"`
+	Password      *string `json:"password,omitempty"`
+	ProxyProtocol byte    `json:"proxy_protocol,omitempty"`
+}
+
+type Authenticator interface {
+	Auth(request AuthRequest, username string) (int, *AuthResponse, error)
 }
 
 func removePublicKeyMethod(methods []string) []string {

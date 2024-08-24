@@ -21,18 +21,23 @@ import (
 )
 
 type Server struct {
-	listener       net.Listener
-	wg             sync.WaitGroup
-	ctx            context.Context
-	cancel         context.CancelFunc
-	Address        string
-	Banner         string
-	SSHConfig      *ssh.ServerConfig
-	Authenticator  LegacyAuthenticator
-	LogWriter      io.Writer
-	ProxyPolicy    ProxyPolicyConfig
-	UsernamePolicy UsernamePolicyConfig
-	PasswordPolicy PasswordPolicyConfig
+	listener      net.Listener
+	wg            sync.WaitGroup
+	ctx           context.Context
+	cancel        context.CancelFunc
+	Address       string
+	Banner        string
+	SSHConfig     *ssh.ServerConfig
+	Authenticator LegacyAuthenticator
+	LogWriter     io.Writer
+	ProxyPolicy   ProxyPolicyConfig
+}
+
+type UpstreamInformation struct {
+	Host          string
+	Signer        ssh.Signer
+	Password      *string
+	ProxyProtocol byte
 }
 
 func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
@@ -97,21 +102,14 @@ func makeServer(config Config) (*Server, error) {
 	} else {
 		logWriter = io.Discard
 	}
+	authenticator := makeLegacyAuthenticator(config.Auth, config.Recovery)
 	sshmux := &Server{
 		Address:       config.Address,
 		Banner:        config.SSH.Banner,
 		SSHConfig:     sshConfig,
-		Authenticator: makeLegacyAuthenticator(config.Auth, config.Recovery),
+		Authenticator: authenticator,
 		LogWriter:     logWriter,
 		ProxyPolicy:   proxyPolicyConfig,
-		UsernamePolicy: UsernamePolicyConfig{
-			InvalidUsernames:       config.Auth.InvalidUsernames,
-			InvalidUsernameMessage: config.Auth.InvalidUsernameMessage,
-		},
-		PasswordPolicy: PasswordPolicyConfig{
-			AllUsernameNoPassword: config.Auth.AllUsernameNoPassword,
-			UsernamesNoPassword:   config.Auth.UsernamesNoPassword,
-		},
 	}
 	return sshmux, nil
 }
@@ -191,9 +189,9 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			session.Downstream.SetUser(user)
 			hasSetUser = true
 		}
-		if slices.Contains(s.UsernamePolicy.InvalidUsernames, user) {
+		if slices.Contains(s.Authenticator.UsernamePolicy.InvalidUsernames, user) {
 			// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
-			msg := fmt.Sprintf(s.UsernamePolicy.InvalidUsernameMessage, user)
+			msg := fmt.Sprintf(s.Authenticator.UsernamePolicy.InvalidUsernameMessage, user)
 			session.Downstream.WriteDisconnectMsg(15, msg)
 			return fmt.Errorf("ssh: invalid username")
 		}
@@ -210,9 +208,9 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 		} else if req.Method == "keyboard-interactive" {
 			// FIXME: Can this be handled by API server?
-			requireUnixPassword := !s.PasswordPolicy.AllUsernameNoPassword &&
+			requireUnixPassword := !s.Authenticator.PasswordPolicy.AllUsernameNoPassword &&
 				!slices.Contains(s.Authenticator.Recovery.Usernames, user) &&
-				!slices.Contains(s.PasswordPolicy.UsernamesNoPassword, user)
+				!slices.Contains(s.Authenticator.PasswordPolicy.UsernamesNoPassword, user)
 			interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 			interactiveEcho := []bool{true, false}
 
