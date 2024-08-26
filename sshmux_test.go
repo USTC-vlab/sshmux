@@ -45,16 +45,16 @@ func initHttp(sshPrivateKey []byte) {
 			return
 		}
 
-		res := &LegacyAuthResponse{
-			Status:     "ok",
-			Id:         1141919,
-			PrivateKey: string(sshPrivateKey),
+		res := map[string]any{
+			"status":      "ok",
+			"vmid":        1141919,
+			"private_key": string(sshPrivateKey),
 		}
 		if enableProxy {
-			res.Address = sshdProxiedAddr.String()
-			res.ProxyProtocol = 2
+			res["address"] = sshdProxiedAddr.String()
+			res["proxy_protocol"] = 2
 		} else {
-			res.Address = sshdServerAddr.String()
+			res["address"] = sshdServerAddr.String()
 		}
 
 		jsonRes, err := json.Marshal(res)
@@ -78,20 +78,18 @@ func initHttp(sshPrivateKey []byte) {
 			return
 		}
 
-		upstream := AuthUpstream{
-			PrivateKey: string(sshPrivateKey),
-		}
+		upstream := map[string]any{"private_key": string(sshPrivateKey)}
 		if enableProxy {
-			proxyProtocol := "v2"
-			upstream.Host = sshdProxiedAddr.IP.String()
-			upstream.Port = uint16(sshdProxiedAddr.Port)
-			upstream.ProxyProtocol = &proxyProtocol
+			upstream["host"] = sshdProxiedAddr.IP.String()
+			upstream["port"] = sshdProxiedAddr.Port
+			upstream["proxy_protocol"] = "v2"
 		} else {
-			upstream.Host = sshdServerAddr.IP.String()
-			upstream.Port = uint16(sshdServerAddr.Port)
+			upstream["host"] = sshdServerAddr.IP.String()
+			upstream["port"] = sshdServerAddr.Port
 		}
 
-		jsonRes, err := json.Marshal(AuthResponse{Upstream: &upstream})
+		res := map[string]any{"upstream": upstream}
+		jsonRes, err := json.Marshal(res)
 		if err != nil {
 			http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
 			return
