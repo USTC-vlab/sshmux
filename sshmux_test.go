@@ -94,7 +94,7 @@ func initUpstreamProxyServer() {
 				log.Fatal(err)
 			}
 			// 2. Send PROXY header to sshmux
-			header := proxyproto.HeaderProxyFromAddrs(2, conn.RemoteAddr(), nil)
+			header := proxyproto.HeaderProxyFromAddrs(2, conn.RemoteAddr(), sshmux.RemoteAddr())
 			_, err = header.WriteTo(sshmux)
 			if err != nil {
 				log.Fatal(err)

@@ -257,7 +257,7 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 		return err
 	}
 	if upstream.ProxyProtocol > 0 {
-		header := proxyproto.HeaderProxyFromAddrs(upstream.ProxyProtocol, session.Downstream.RemoteAddr(), nil)
+		header := proxyproto.HeaderProxyFromAddrs(upstream.ProxyProtocol, session.Downstream.RemoteAddr(), conn.RemoteAddr())
 		_, err := header.WriteTo(conn)
 		if err != nil {
 			return err
