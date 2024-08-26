@@ -33,10 +33,11 @@ type Server struct {
 }
 
 type upstreamInformation struct {
-	Address       string
-	Signer        ssh.Signer
-	Password      *string
-	ProxyProtocol byte
+	Address          string
+	Signer           ssh.Signer
+	Password         *string
+	ProxyProtocol    *byte
+	ProxyDestination string
 }
 
 func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
@@ -219,15 +220,30 @@ auth_requests:
 					Password: upstreamResp.Password,
 				}
 				upstream.Address = net.JoinHostPort(upstreamResp.Host, fmt.Sprintf("%d", upstreamResp.Port))
-				if upstreamResp.ProxyProtocol != nil {
-					switch *upstreamResp.ProxyProtocol {
-					case "v1":
-						upstream.ProxyProtocol = 1
-					case "v2":
-						upstream.ProxyProtocol = 2
-					default:
-						return fmt.Errorf("unknown PROXY protocol version: %s", *upstreamResp.ProxyProtocol)
+				if resp.Proxy != nil {
+					proxyConfig := *resp.Proxy
+					// parse protocol version
+					var protocolVersion byte
+					if proxyConfig.Protocol != nil {
+						switch *proxyConfig.Protocol {
+						case "v1":
+							protocolVersion = 1
+						case "v2":
+							protocolVersion = 2
+						default:
+							return fmt.Errorf("unknown PROXY protocol version: %s", *proxyConfig.Protocol)
+						}
 					}
+					upstream.ProxyProtocol = &protocolVersion
+					// parse protocol destination
+					upstream.ProxyDestination = upstream.Address
+					if proxyConfig.Host == "" {
+						proxyConfig.Host = upstreamResp.Host
+					}
+					if proxyConfig.Port == 0 {
+						proxyConfig.Port = upstreamResp.Port
+					}
+					upstream.Address = net.JoinHostPort(proxyConfig.Host, fmt.Sprintf("%d", proxyConfig.Port))
 				}
 				break auth_requests
 			case 401:
@@ -277,8 +293,14 @@ auth_requests:
 	if err != nil {
 		return err
 	}
-	if upstream.ProxyProtocol > 0 {
-		header := proxyproto.HeaderProxyFromAddrs(upstream.ProxyProtocol, session.Downstream.RemoteAddr(), conn.RemoteAddr())
+	if upstream.ProxyProtocol != nil {
+		dest := conn.RemoteAddr()
+		if upstream.ProxyDestination != upstream.Address {
+			if addr, err := net.ResolveTCPAddr("tcp", upstream.ProxyDestination); err == nil {
+				dest = addr
+			}
+		}
+		header := proxyproto.HeaderProxyFromAddrs(*upstream.ProxyProtocol, session.Downstream.RemoteAddr(), dest)
 		_, err := header.WriteTo(conn)
 		if err != nil {
 			return err

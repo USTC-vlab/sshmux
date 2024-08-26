@@ -21,6 +21,7 @@ type AuthResponse struct {
 	Challenges []AuthChallenge `json:"challenges,omitempty"`
 	Failure    *AuthFailure    `json:"failure,omitempty"`
 	Upstream   *AuthUpstream   `json:"upstream,omitempty"`
+	Proxy      *AuthProxy      `json:"proxy,omitempty"`
 }
 
 type AuthChallenge struct {
@@ -41,12 +42,17 @@ type AuthFailure struct {
 }
 
 type AuthUpstream struct {
-	Host          string  `json:"host"`
-	Port          uint16  `json:"port,omitempty"`
-	PrivateKey    string  `json:"private_key,omitempty"`
-	Certificate   string  `json:"certificate,omitempty"`
-	Password      *string `json:"password,omitempty"`
-	ProxyProtocol *string `json:"proxy_protocol,omitempty"`
+	Host        string  `json:"host"`
+	Port        uint16  `json:"port,omitempty"`
+	PrivateKey  string  `json:"private_key,omitempty"`
+	Certificate string  `json:"certificate,omitempty"`
+	Password    *string `json:"password,omitempty"`
+}
+
+type AuthProxy struct {
+	Host     string  `json:"host,omitempty"`
+	Port     uint16  `json:"port,omitempty"`
+	Protocol *string `json:"protocol,omitempty"`
 }
 
 type Authenticator interface {

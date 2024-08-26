@@ -78,17 +78,20 @@ func initHttp(sshPrivateKey []byte) {
 			return
 		}
 
-		upstream := map[string]any{"private_key": string(sshPrivateKey)}
+		res := map[string]any{
+			"upstream": map[string]any{
+				"host":        sshdServerAddr.IP.String(),
+				"port":        sshdServerAddr.Port,
+				"private_key": string(sshPrivateKey),
+			},
+		}
 		if enableProxy {
-			upstream["host"] = sshdProxiedAddr.IP.String()
-			upstream["port"] = sshdProxiedAddr.Port
-			upstream["proxy_protocol"] = "v2"
-		} else {
-			upstream["host"] = sshdServerAddr.IP.String()
-			upstream["port"] = sshdServerAddr.Port
+			res["proxy"] = map[string]any{
+				"host": sshdProxiedAddr.IP.String(),
+				"port": sshdProxiedAddr.Port,
+			}
 		}
 
-		res := map[string]any{"upstream": upstream}
 		jsonRes, err := json.Marshal(res)
 		if err != nil {
 			http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)

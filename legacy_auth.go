@@ -127,22 +127,23 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 		if err != nil {
 			return 500, nil, err
 		}
-		auth_upstream := AuthUpstream{
-			Host:        address.Addr().String(),
-			Port:        address.Port(),
-			PrivateKey:  upstream.PrivateKey,
-			Certificate: upstream.Certificate,
-			Password:    upstream.Password,
+		resp := AuthResponse{
+			Upstream: &AuthUpstream{
+				Host:        address.Addr().String(),
+				Port:        address.Port(),
+				PrivateKey:  upstream.PrivateKey,
+				Certificate: upstream.Certificate,
+				Password:    upstream.Password,
+			},
 		}
 		unix_password, has_unix_password := request.Payload["unix_password"]
 		if has_unix_password {
-			auth_upstream.Password = &unix_password
+			resp.Upstream.Password = &unix_password
 		}
 		if upstream.ProxyProtocol > 0 {
-			proxyProtocol := fmt.Sprintf("v%d", upstream.ProxyProtocol)
-			auth_upstream.ProxyProtocol = &proxyProtocol
+			protocolVersion := fmt.Sprintf("v%d", upstream.ProxyProtocol)
+			resp.Proxy = &AuthProxy{Protocol: &protocolVersion}
 		}
-		resp := AuthResponse{Upstream: &auth_upstream}
 		return 200, &resp, nil
 	}
 	return 403, &AuthResponse{}, nil
