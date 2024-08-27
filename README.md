@@ -40,20 +40,20 @@ Auth settings configures the authentication and authorization API used by `sshmu
 | Key        | Type           | Description                                                                | Required | Example                                            |
 | ---------- | -------------- | -------------------------------------------------------------------------- | -------- | -------------------------------------------------- |
 | `endpoint` | `string`       | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"`                      |
-| `version`  | `string`       | Auth endpoint API version (`legacy`, `v1`). Defaults to `legacy`.          | No       | `"v1"`                                             |
+| `version`  | `string`       | Auth endpoint API version (`"legacy"`, `"v1"`). Defaults to `"legacy"`.    | No       | `"v1"`                                             |
 | `headers`  | `[]HTTPHeader` | Extra HTTP headers to send to API server.                                  | No       | See [`fixtures/config.toml`](fixtures/config.toml) |
 
 #### Legacy Auth Settings
 
 The following settings are only used with `legacy` auth APIs. They are also grouped under `auth` in the TOML file.
 
-| Key                        | Type       | Description                                                 | Required                 | Example                      |
-| -------------------------- | ---------- | ----------------------------------------------------------- | ------------------------ | ---------------------------- |
-| `token`                    | `string`   | Token used to authenticate with the API endpoint.           | If `version` is `legacy` | `"long-and-random-token"`    |
-| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password. | No                       | `true`                       |
-| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.            | No                       | `["vlab", "ubuntu", "root"]` |
-| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                     | No                       | `["user"]`                   |
-| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.  | No                       | `"Invalid username %s."`     |
+| Key                        | Type       | Description                                                 | Required                   | Example                      |
+| -------------------------- | ---------- | ----------------------------------------------------------- | -------------------------- | ---------------------------- |
+| `token`                    | `string`   | Token used to authenticate with the API endpoint.           | If `version` is `"legacy"` | `"long-and-random-token"`    |
+| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password. | No                         | `true`                       |
+| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.            | No                         | `["vlab", "ubuntu", "root"]` |
+| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                     | No                         | `["user"]`                   |
+| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.  | No                         | `"Invalid username %s."`     |
 
 ### Logger Settings
 
@@ -84,31 +84,77 @@ Recovery settings configures Vlab recovery service support of `sshmux`. They are
 | `usernames` | `[]string` | Usernames dedicated to the recovery server.           | No       | `["recovery", "console"]` |
 | `token`     | `string`   | Token used to authenticate with the recovery backend. | No       | `"long-and-random-token"` |
 
-## API server
+## Auth API
 
-`sshmux` requires an API server to perform authentication and authorization for a user.
+`sshmux` uses a RESTful API to perform authentication and authorization for a user.
 
-The API accepts JSON input with the following keys:
+### `POST /v1/auth/:username`
 
-| Key               | Type     | Description                                                                                              |
-| ----------------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `auth_type`       | `string` | The authentication type. Always set to `"key"` at the moment.                                            |
-| `username`        | `string` | Vlab username. Omitted if the user is authenticating with public key.                                    |
-| `password`        | `string` | Vlab password. Omitted if the user is authenticating with public key.                                    |
-| `public_key_type` | `string` | SSH public key type. Omitted if the user is authenticating with username and password.                   |
-| `public_key_data` | `string` | Base64-encoded SSH public key payload. Omitted if the user is authenticating with username and password. |
-| `unix_username`   | `string` | UNIX username the user is requesting access to.                                                          |
-| `token`           | `string` | Token used to authenticate the `sshmux` instance.                                                        |
+#### Input
 
-The API responds with JSON output with the following keys:
+| Key               | Type                  | Description                                                                                    | Position | Optional |
+| ----------------- | --------------------- | ---------------------------------------------------------------------------------------------- | -------- | -------- |
+| `username`        | `string`              | SSH user name. Usually the one for logging into the target server.                             | Path     | No       |
+| `method`          | `string`              | SSH authentication method. Usually one of `"none"`, `"publickey"` or `"keyboard-interactive"`. | Body     | No       |
+| `public_key`      | `string`              | User public key, serialized in OpenSSH format.                                                 | Body     | Yes      |
+| `payload`         | `Map<string, string>` | Authentication payload constructed from interactive input.                                     | Body     | Yes      |
 
-| Key              | Type      | Description                                                                                                      |
-| ---------------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
-| `status`         | `string`  | The authentication status. Should be `"ok"` if the user is authorized.                                           |
-| `address`        | `string`  | TCP host and port of the downstream SSH server the user is requesting for.                                       |
-| `private_key`    | `string`  | SSH private key to authenticate for the downstream.                                                              |
-| `cert`           | `string`  | The certificate associated with the SSH private key.                                                             |
-| `vmid`           | `integer` | ID of the requested VM. Only used for recovery access.                                                           |
-| `proxy_protocol` | `integer` | PROXY protocol version to use for the downstream. Should be `1`, `2` or omitted (which disables PROXY protocol). |
+#### Output: `200 OK`
 
-Note that if the user is not authorized, the API server should return a `status` other than `"ok"`, and other keys can be safely ommitted.
+| Key              | Type                    | Description                   | Optional |
+| ---------------- | ----------------------- | ----------------------------- | -------- |
+| `upstream`       | [`Upstream`](#upstream) | SSH upstream information.     | No       |
+| `proxy`          | [`Proxy`](#proxy)       | PROXY protocol configuration. | Yes      |
+
+##### `Upstream`
+
+| Key           | Type     | Description                                                                 | Optional |
+| ------------- | -------- | --------------------------------------------------------------------------- | -------- |
+| `host`        | `string` | Host name or IP of upstream SSH server.                                     | No       |
+| `port`        | `uint`   | Port number of upstream SSH server. Defaults to `22`.                       | Yes      |
+| `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | Yes      |
+| `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | Yes      |
+| `password`    | `string` | Password for authenticating with upstream.                                  | Yes      |
+
+##### `Proxy`
+
+| Key           | Type     | Description                                                                         | Optional |
+| ------------- | -------- | ----------------------------------------------------------------------------------- | -------- |
+| `host`        | `string` | Host name or IP of the proxy server. Defaults to `upstream.host`.                   | Yes      |
+| `port`        | `uint`   | Port number of the proxy server. Defaults to `upstream.port`.                       | Yes      |
+| `protocol`    | `string` | PROXY protocol version to use. Must be one of `"v1"` or `"v2"`. Defaults to `"v2"`. | Yes      |
+
+#### Output: `401 Not Authorized`
+
+| Key          | Type                        | Description                                                                                      | Optional |
+| ------------ | --------------------------- | ------------------------------------------------------------------------------------------------ | -------- |
+| `challenges` | [`[]Challenge`](#challenge) | Challenges for extra inputs from user. Only applicable to `keyboard-interactive` authentication. | No       |
+
+##### `Challenge`
+
+| Key           | Type                                  | Description                        | Optional |
+| ------------- | ------------------------------------- | ---------------------------------- | -------- |
+| `instruction` | `string`                              | Instruction for the challenge.     | No       |
+| `fields`      | [`[]ChallengeField`](#challengefield) | Requested fields by the challenge. | Yes      |
+
+##### `ChallengeField`
+
+| Key      | Type     | Description                                                | Optional |
+| -------- | -------- | ---------------------------------------------------------- | -------- |
+| `key`    | `string` | Key to set the user input on.                              | No       |
+| `prompt` | `string` | Prompt for the input field.                                | No       |
+| `secret` | `bool`   | Whether to treat the input as secret. Defaults to `false`. | Yes      |
+
+#### Output: `403 Forbidden`
+
+| Key       | Type                  | Description               | Optional |
+| --------- | --------------------- | ------------------------- | -------- |
+| `failure` | [`Failure`](#failure) | Auth failure information. | Yes      |
+
+##### `Failure`
+
+| Key          | Type     | Description                                                                 | Optional |
+| ------------ | -------- | --------------------------------------------------------------------------- | -------- |
+| `message`    | `string` | Message from the server to describe the failure.                            | No       |
+| `disconnect` | `string` | Whether to disconnect the downstream user. Defaults to `false`.             | Yes      |
+| `reason`     | `uint`   | SSH disconnect reason code. Defaults to `11` (`DISCONNECT_BY_APPLICATION`). | Yes      |
