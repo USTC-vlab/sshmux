@@ -247,6 +247,12 @@ auth_requests:
 				}
 				break auth_requests
 			case 401:
+				if len(resp.Challenges) == 0 {
+					// The API server is requesting no challenges, which is abnormal and will
+					// likely lead to an infinite loop. Silently fail in such case.
+					session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
+					continue auth_requests
+				}
 				for _, challenge := range resp.Challenges {
 					questions := make([]string, 0, len(challenge.Fields))
 					withEcho := make([]bool, 0, len(challenge.Fields))
