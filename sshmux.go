@@ -190,7 +190,7 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			return err
 		}
 	}
-	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
+	// Stage 1: Authenticate the user with API
 auth_requests:
 	for {
 		authReq, err := session.Downstream.ReadAuthRequest(true)
@@ -251,7 +251,7 @@ auth_requests:
 			case 401:
 				if len(resp.Challenges) == 0 {
 					// The API server is requesting no challenges, which is abnormal and will
-					// likely lead to an infinite loop. Silently fail in such case.
+					// likely lead to an infinite loop
 					session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 					continue auth_requests
 				}
@@ -338,7 +338,7 @@ auth_requests:
 	if err != nil {
 		return err
 	}
-	// For the first auth fail, we mark it partial succss
+	// For the first auth fail, we mark it as partial success
 	if !res.Success {
 		err = session.Downstream.WriteAuthFailure(removePublicKeyMethod(res.Methods), true)
 	} else {
@@ -350,7 +350,7 @@ auth_requests:
 	if res.Success {
 		return nil
 	}
-	// Finally, pipe downstream and upstream's auth request and result
+	// Finally, pipe downstream and upstream's auth requests and results
 	// Note that publickey auth cannot be used anymore after this point
 	for {
 		req, err := session.Downstream.ReadAuthRequest(true)
