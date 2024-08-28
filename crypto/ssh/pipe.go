@@ -475,7 +475,8 @@ func (s *PipeSession) RunPipe() error {
 	go func() {
 		defer s.Upstream.transport.Close()
 		// If the upstream doesn't support ping@openssh.com, short-circuit with a pong response
-		_, upstream_supports_ping := s.Upstream.extensions["ping@openssh.com"]
+		upstream_ping_version := s.Upstream.extensions["ping@openssh.com"]
+		upstream_supports_ping := len(upstream_ping_version) == 1 && upstream_ping_version[0] == byte('0')
 		c <- pipe(s.Upstream.transport, s.Downstream.transport, !upstream_supports_ping)
 	}()
 	return <-c
