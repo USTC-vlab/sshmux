@@ -144,7 +144,7 @@ func (s *Downstream) ReadAuthRequest(skipQuery bool) (*AuthRequest, error) {
 				return nil, parseError(msgUserAuthRequest)
 			}
 			algo := string(algoBytes)
-			if !isAcceptableAlgo(algo) {
+			if !contains(supportedPubKeyAuthAlgos, underlyingAlgo(algo)) {
 				return nil, fmt.Errorf("ssh: algorithm %q not accepted", algo)
 			}
 
@@ -162,7 +162,7 @@ func (s *Downstream) ReadAuthRequest(skipQuery bool) (*AuthRequest, error) {
 				if !ok || len(payload) > 0 {
 					return nil, parseError(msgUserAuthRequest)
 				}
-				if !isAcceptableAlgo(sig.Format) {
+				if !contains(supportedPubKeyAuthAlgos, underlyingAlgo(sig.Format)) {
 					return nil, fmt.Errorf("ssh: algorithm %q not accepted", sig.Format)
 				}
 				if underlyingAlgo(algo) != sig.Format {
@@ -478,14 +478,4 @@ func (s *PipeSession) RunPipe() error {
 		c <- pipe(s.Upstream.transport, s.Downstream.transport, !upstream_supports_ping)
 	}()
 	return <-c
-}
-
-func isAcceptableAlgo(algo string) bool {
-	switch algo {
-	case KeyAlgoRSA, KeyAlgoRSASHA256, KeyAlgoRSASHA512, KeyAlgoDSA, KeyAlgoECDSA256, KeyAlgoECDSA384, KeyAlgoECDSA521, KeyAlgoSKECDSA256, KeyAlgoED25519, KeyAlgoSKED25519,
-		CertAlgoRSAv01, CertAlgoDSAv01, CertAlgoECDSA256v01, CertAlgoECDSA384v01, CertAlgoECDSA521v01, CertAlgoSKECDSA256v01, CertAlgoED25519v01, CertAlgoSKED25519v01,
-		CertAlgoRSASHA256v01, CertAlgoRSASHA512v01:
-		return true
-	}
-	return false
 }
