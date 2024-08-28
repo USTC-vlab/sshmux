@@ -45,24 +45,34 @@ Auth settings configures the authentication and authorization API used by `sshmu
 
 #### Legacy Auth Settings
 
-The following settings are only used with `legacy` auth APIs. They are also grouped under `auth` in the TOML file.
+The following settings are only used by `legacy` auth APIs. They are also grouped under `auth` in the TOML file.
 
-| Key                        | Type       | Description                                                 | Required                   | Example                      |
-| -------------------------- | ---------- | ----------------------------------------------------------- | -------------------------- | ---------------------------- |
-| `token`                    | `string`   | Token used to authenticate with the API endpoint.           | If `version` is `"legacy"` | `"long-and-random-token"`    |
-| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password. | No                         | `true`                       |
-| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.            | No                         | `["vlab", "ubuntu", "root"]` |
-| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                     | No                         | `["user"]`                   |
-| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.  | No                         | `"Invalid username %s."`     |
+| Key                        | Type       | Description                                                 | Required                        | Example                      |
+| -------------------------- | ---------- | ----------------------------------------------------------- | ------------------------------- | ---------------------------- |
+| `token`                    | `string`   | Token used to authenticate with the API endpoint.           | If `auth.version` is `"legacy"` | `"long-and-random-token"`    |
+| `all-username-nopassword`  | `bool`     | If set to `true`, no users will be asked for UNIX password. | No                              | `true`                       |
+| `usernames-nopassword`     | `[]string` | Usernames that won't be asked for UNIX password.            | No                              | `["vlab", "ubuntu", "root"]` |
+| `invalid-usernames`        | `[]string` | Usernames that are known to be invalid.                     | No                              | `["user"]`                   |
+| `invalid-username-message` | `string`   | Message to display when the requested username is invalid.  | No                              | `"Invalid username %s."`     |
+
+#### Recovery Settings
+
+Recovery settings configures Vlab recovery service support of `sshmux` for `legacy` auth APIs. They are grouped under `recovery` in the TOML file.
+
+| Key         | Type       | Description                                           | Required | Example                   |
+| ----------- | ---------- | ----------------------------------------------------- | -------- | ------------------------- |
+| `address`   | `string`   | SSH host and port of the recovery server.             | No       | `"172.30.0.101:2222"`     |
+| `usernames` | `[]string` | Usernames dedicated to the recovery server.           | No       | `["recovery", "console"]` |
+| `token`     | `string`   | Token used to authenticate with the recovery backend. | No       | `"long-and-random-token"` |
 
 ### Logger Settings
 
 Logger settings configures the logger behavior of `sshmux`. They are grouped under `logger` in the TOML file.
 
-| Key        | Type     | Description                                                                   | Required               | Example                  |
-| ---------- | -------- | ----------------------------------------------------------------------------- | ---------------------- | ------------------------ |
-| `enabled`  | `bool`   | Whether the logger is enabled. Defaults to `false`.                           | No                     | `true`                   |
-| `endpoint` | `string` | Endpoint URL that `sshmux` will log onto. Only `udp` scheme is supported now. | If `enabled` is `true` | `"udp://127.0.0.1:5556"` |
+| Key        | Type     | Description                                                                   | Required                      | Example                  |
+| ---------- | -------- | ----------------------------------------------------------------------------- | ----------------------------- | ------------------------ |
+| `enabled`  | `bool`   | Whether the logger is enabled. Defaults to `false`.                           | No                            | `true`                   |
+| `endpoint` | `string` | Endpoint URL that `sshmux` will log onto. Only `udp` scheme is supported now. | If `logger.enabled` is `true` | `"udp://127.0.0.1:5556"` |
 
 ### PROXY Protocol Settings
 
@@ -73,16 +83,6 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | `enabled`  | `bool`     | Whether PROXY protocol support is enabled. Defaults to `false`. | No       | `true`                          |
 | `hosts`    | `[]string` | Host names from which PROXY protocol is allowed.                | No       | `["nginx.local", "127.0.0.22"]` |
 | `networks` | `[]string` | Network CIDRs from which PROXY protocol is allowed.             | No       | `["10.10.0.0/24"]`              |
-
-### Recovery Settings
-
-Recovery settings configures Vlab recovery service support of `sshmux`. They are grouped under `recovery` in the TOML file.
-
-| Key         | Type       | Description                                           | Required | Example                   |
-| ----------- | ---------- | ----------------------------------------------------- | -------- | ------------------------- |
-| `address`   | `string`   | SSH host and port of the recovery server.             | No       | `"172.30.0.101:2222"`     |
-| `usernames` | `[]string` | Usernames dedicated to the recovery server.           | No       | `["recovery", "console"]` |
-| `token`     | `string`   | Token used to authenticate with the recovery backend. | No       | `"long-and-random-token"` |
 
 ## Auth API
 
