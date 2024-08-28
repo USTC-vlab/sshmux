@@ -9,11 +9,6 @@ import (
 	"net"
 )
 
-// Helper functions to export variables from this module
-func DefaultPubKeyAuthAlgos() []string {
-	return supportedPubKeyAuthAlgos
-}
-
 type Downstream struct {
 	*connection
 }
@@ -45,6 +40,9 @@ type AuthResult struct {
 func NewPipeSession(c net.Conn, config *ServerConfig) (session *PipeSession, err error) {
 	serverConfig := *config
 	serverConfig.SetDefaults()
+	if len(serverConfig.PublicKeyAuthAlgorithms) == 0 {
+		serverConfig.PublicKeyAuthAlgorithms = supportedPubKeyAuthAlgos
+	}
 	conn := &connection{
 		sshConn: sshConn{conn: c},
 	}
