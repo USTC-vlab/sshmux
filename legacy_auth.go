@@ -52,9 +52,14 @@ type LegacyAuthenticator struct {
 	Recovery       RecoveryConfig
 	UsernamePolicy UsernamePolicyConfig
 	PasswordPolicy PasswordPolicyConfig
+	Headers        http.Header
 }
 
 func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAuthenticator {
+	headers := http.Header{}
+	for _, header := range auth.Headers {
+		headers.Add(header.Name, header.Value)
+	}
 	return LegacyAuthenticator{
 		Endpoint: auth.Endpoint,
 		Token:    auth.Token,
@@ -67,6 +72,7 @@ func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAut
 			AllUsernameNoPassword: auth.AllUsernameNoPassword,
 			UsernamesNoPassword:   auth.UsernamesNoPassword,
 		},
+		Headers: headers,
 	}
 }
 
@@ -154,7 +160,14 @@ func (auth LegacyAuthenticator) AuthUser(request any, username string) (*LegacyA
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return nil, err
 	}
-	res, err := http.Post(auth.Endpoint, "application/json", payload)
+	req, err := http.NewRequest("POST", auth.Endpoint, payload)
+	if err != nil {
+		return nil, err
+	}
+	req.Header = auth.Headers.Clone()
+	req.Header.Set("accept", "application/json")
+	req.Header.Set("content-type", "application/json")
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

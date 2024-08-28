@@ -100,7 +100,9 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header = auth.Headers
+	req.Header = auth.Headers.Clone()
+	req.Header.Set("accept", "application/json")
+	req.Header.Set("content-type", "application/json")
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
