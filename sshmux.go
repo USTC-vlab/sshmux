@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,10 +44,10 @@ type upstreamInformation struct {
 
 func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
 	if config.Path == "" && config.Base64 == "" && config.Content == "" {
-		return nil, fmt.Errorf("one of path, base64 or content of the SSH key must be set")
+		return nil, errors.New("one of path, base64 or content of the SSH key must be set")
 	}
 	if (config.Path != "" && config.Base64 != "") || (config.Path != "" && config.Content != "") || (config.Base64 != "" && config.Content != "") {
-		return nil, fmt.Errorf("only one of path, base64 or content of the SSH key can be set")
+		return nil, errors.New("only one of path, base64 or content of the SSH key can be set")
 	}
 	var pemFile []byte
 	if config.Path != "" {
@@ -219,7 +221,7 @@ auth_requests:
 					Signer:   parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate),
 					Password: upstreamResp.Password,
 				}
-				upstream.Address = net.JoinHostPort(upstreamResp.Host, fmt.Sprintf("%d", upstreamResp.Port))
+				upstream.Address = net.JoinHostPort(upstreamResp.Host, strconv.Itoa(int(upstreamResp.Port)))
 				if resp.Proxy != nil {
 					proxyConfig := *resp.Proxy
 					// parse protocol version
@@ -243,7 +245,7 @@ auth_requests:
 					if proxyConfig.Port == 0 {
 						proxyConfig.Port = upstreamResp.Port
 					}
-					upstream.Address = net.JoinHostPort(proxyConfig.Host, fmt.Sprintf("%d", proxyConfig.Port))
+					upstream.Address = net.JoinHostPort(proxyConfig.Host, strconv.Itoa(int(proxyConfig.Port)))
 				}
 				break auth_requests
 			case 401:
@@ -265,7 +267,7 @@ auth_requests:
 						return err
 					}
 					if len(answers) != len(questions) {
-						return fmt.Errorf("ssh: numbers of answers and questions do not match")
+						return errors.New("ssh: numbers of answers and questions do not match")
 					}
 					if req.Payload == nil {
 						req.Payload = make(map[string]string, len(challenge.Fields))
