@@ -92,69 +92,69 @@ Recovery settings configures Vlab recovery service support of `sshmux`. They are
 
 #### Input
 
-| Key               | Type                  | Description                                                                                    | Position | Optional |
+| Key               | Type                  | Description                                                                                    | Position | Required |
 | ----------------- | --------------------- | ---------------------------------------------------------------------------------------------- | -------- | -------- |
-| `username`        | `string`              | SSH user name. Usually the one for logging into the target server.                             | Path     | No       |
-| `method`          | `string`              | SSH authentication method. Usually one of `"none"`, `"publickey"` or `"keyboard-interactive"`. | Body     | No       |
-| `public_key`      | `string`              | User public key, serialized in OpenSSH format.                                                 | Body     | Yes      |
-| `payload`         | `Map<string, string>` | Authentication payload constructed from interactive input.                                     | Body     | Yes      |
+| `username`        | `string`              | SSH user name. Usually the one for logging into the target server.                             | Path     | Yes      |
+| `method`          | `string`              | SSH authentication method. Usually one of `"none"`, `"publickey"` or `"keyboard-interactive"`. | Body     | Yes      |
+| `public_key`      | `string`              | User public key, serialized in OpenSSH format.                                                 | Body     | No       |
+| `payload`         | `Map<string, string>` | Authentication payload constructed from interactive input.                                     | Body     | No       |
 
 #### Output: `200 OK`
 
-| Key              | Type                    | Description                   | Optional |
+| Key              | Type                    | Description                   | Required |
 | ---------------- | ----------------------- | ----------------------------- | -------- |
-| `upstream`       | [`Upstream`](#upstream) | SSH upstream information.     | No       |
-| `proxy`          | [`Proxy`](#proxy)       | PROXY protocol configuration. | Yes      |
+| `upstream`       | [`Upstream`](#upstream) | SSH upstream information.     | Yes      |
+| `proxy`          | [`Proxy`](#proxy)       | PROXY protocol configuration. | No       |
 
 ##### `Upstream`
 
-| Key           | Type     | Description                                                                 | Optional |
+| Key           | Type     | Description                                                                 | Required |
 | ------------- | -------- | --------------------------------------------------------------------------- | -------- |
-| `host`        | `string` | Host name or IP of upstream SSH server.                                     | No       |
-| `port`        | `uint`   | Port number of upstream SSH server. Defaults to `22`.                       | Yes      |
-| `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | Yes      |
-| `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | Yes      |
-| `password`    | `string` | Password for authenticating with upstream.                                  | Yes      |
+| `host`        | `string` | Host name or IP of upstream SSH server.                                     | Yes      |
+| `port`        | `uint`   | Port number of upstream SSH server. Defaults to `22`.                       | No       |
+| `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | No       |
+| `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | No       |
+| `password`    | `string` | Password for authenticating with upstream.                                  | No       |
 
 ##### `Proxy`
 
-| Key           | Type     | Description                                                                         | Optional |
+| Key           | Type     | Description                                                                         | Required |
 | ------------- | -------- | ----------------------------------------------------------------------------------- | -------- |
-| `host`        | `string` | Host name or IP of the proxy server. Defaults to `upstream.host`.                   | Yes      |
-| `port`        | `uint`   | Port number of the proxy server. Defaults to `upstream.port`.                       | Yes      |
-| `protocol`    | `string` | PROXY protocol version to use. Must be one of `"v1"` or `"v2"`. Defaults to `"v2"`. | Yes      |
+| `host`        | `string` | Host name or IP of the proxy server. Defaults to `upstream.host`.                   | No       |
+| `port`        | `uint`   | Port number of the proxy server. Defaults to `upstream.port`.                       | No       |
+| `protocol`    | `string` | PROXY protocol version to use. Must be one of `"v1"` or `"v2"`. Defaults to `"v2"`. | No       |
 
 #### Output: `401 Not Authorized`
 
-| Key          | Type                        | Description                                                                                      | Optional |
+| Key          | Type                        | Description                                                                                      | Required |
 | ------------ | --------------------------- | ------------------------------------------------------------------------------------------------ | -------- |
-| `challenges` | [`[]Challenge`](#challenge) | Challenges for extra inputs from user. Only applicable to `keyboard-interactive` authentication. | No       |
+| `challenges` | [`[]Challenge`](#challenge) | Challenges for extra inputs from user. Only applicable to `keyboard-interactive` authentication. | Yes      |
 
 ##### `Challenge`
 
-| Key           | Type                                  | Description                        | Optional |
+| Key           | Type                                  | Description                        | Required |
 | ------------- | ------------------------------------- | ---------------------------------- | -------- |
-| `instruction` | `string`                              | Instruction for the challenge.     | No       |
-| `fields`      | [`[]ChallengeField`](#challengefield) | Requested fields by the challenge. | Yes      |
+| `instruction` | `string`                              | Instruction for the challenge.     | Yes      |
+| `fields`      | [`[]ChallengeField`](#challengefield) | Requested fields by the challenge. | No       |
 
 ##### `ChallengeField`
 
-| Key      | Type     | Description                                                | Optional |
+| Key      | Type     | Description                                                | Required |
 | -------- | -------- | ---------------------------------------------------------- | -------- |
-| `key`    | `string` | Key to set the user input on.                              | No       |
-| `prompt` | `string` | Prompt for the input field.                                | No       |
-| `secret` | `bool`   | Whether to treat the input as secret. Defaults to `false`. | Yes      |
+| `key`    | `string` | Key to set the user input on.                              | Yes      |
+| `prompt` | `string` | Prompt for the input field.                                | Yes      |
+| `secret` | `bool`   | Whether to treat the input as secret. Defaults to `false`. | No       |
 
 #### Output: `403 Forbidden`
 
-| Key       | Type                  | Description               | Optional |
+| Key       | Type                  | Description               | Required |
 | --------- | --------------------- | ------------------------- | -------- |
-| `failure` | [`Failure`](#failure) | Auth failure information. | Yes      |
+| `failure` | [`Failure`](#failure) | Auth failure information. | No       |
 
 ##### `Failure`
 
-| Key          | Type     | Description                                                                 | Optional |
+| Key          | Type     | Description                                                                 | Required |
 | ------------ | -------- | --------------------------------------------------------------------------- | -------- |
-| `message`    | `string` | Message from the server to describe the failure.                            | No       |
-| `disconnect` | `string` | Whether to disconnect the downstream user. Defaults to `false`.             | Yes      |
-| `reason`     | `uint`   | SSH disconnect reason code. Defaults to `11` (`DISCONNECT_BY_APPLICATION`). | Yes      |
+| `message`    | `string` | Message from the server to describe the failure.                            | Yes      |
+| `disconnect` | `string` | Whether to disconnect the downstream user. Defaults to `false`.             | No       |
+| `reason`     | `uint`   | SSH disconnect reason code. Defaults to `11` (`DISCONNECT_BY_APPLICATION`). | No       |

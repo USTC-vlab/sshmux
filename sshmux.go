@@ -93,7 +93,7 @@ func makeServer(config Config) (*Server, error) {
 		if loggerURL.Scheme == "udp" {
 			conn, err := net.Dial("udp", loggerURL.Host)
 			if err != nil {
-				return nil, fmt.Errorf("logger dial failed: %s", err)
+				return nil, fmt.Errorf("logger dial failed: %w", err)
 			}
 			logWriter = conn
 		} else {
