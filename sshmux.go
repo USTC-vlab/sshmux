@@ -165,7 +165,7 @@ func (s *Server) handler(conn net.Conn) {
 			log.Println("runPipeSession:", err)
 		}
 		for _, attr := range attrs {
-			logger = logger.With(attr)
+			*logger = *logger.With(attr)
 		}
 	}
 }
