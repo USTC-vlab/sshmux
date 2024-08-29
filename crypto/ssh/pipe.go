@@ -442,11 +442,22 @@ func (s *PipeSession) Close() {
 	}
 }
 
-func pipe(dst, src packetConn) error {
+func pipe(dst, src packetConn, handlePing bool) error {
 	for {
 		msg, err := src.readPacket()
 		if err != nil {
 			return err
+		}
+		if handlePing && msg[0] == msgPing {
+			var ping pingMsg
+			if err := Unmarshal(msg, &ping); err != nil {
+				return fmt.Errorf("failed to unmarshal ping@openssh.com message: %w", err)
+			}
+			err = src.writePacket(Marshal(pongMsg(ping)))
+			if err != nil {
+				return err
+			}
+			continue
 		}
 		err = dst.writePacket(msg)
 		if err != nil {
@@ -459,11 +470,14 @@ func (s *PipeSession) RunPipe() error {
 	c := make(chan error)
 	go func() {
 		defer s.Downstream.transport.Close()
-		c <- pipe(s.Downstream.transport, s.Upstream.transport)
+		c <- pipe(s.Downstream.transport, s.Upstream.transport, false)
 	}()
 	go func() {
 		defer s.Upstream.transport.Close()
-		c <- pipe(s.Upstream.transport, s.Downstream.transport)
+		// If the upstream doesn't support ping@openssh.com, short-circuit with a pong response
+		upstream_ping_version := s.Upstream.extensions["ping@openssh.com"]
+		upstream_supports_ping := len(upstream_ping_version) == 1 && upstream_ping_version[0] == byte('0')
+		c <- pipe(s.Upstream.transport, s.Downstream.transport, !upstream_supports_ping)
 	}()
 	return <-c
 }
