@@ -26,7 +26,6 @@ type Server struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	Address        string
-	Banner         string
 	SSHConfig      *ssh.ServerConfig
 	Authenticator  Authenticator
 	LogWriter      io.Writer
@@ -64,7 +63,12 @@ func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
 }
 
 func makeServer(config Config) (*Server, error) {
-	sshConfig := &ssh.ServerConfig{ServerVersion: "SSH-2.0-taokystrong"}
+	sshConfig := &ssh.ServerConfig{
+		ServerVersion: "SSH-2.0-taokystrong",
+		BannerCallback: func(conn ssh.ConnMetadata) string {
+			return config.SSH.Banner
+		},
+	}
 	for _, keyConf := range config.SSH.HostKeys {
 		key, err := validateKey(keyConf)
 		if err != nil {
@@ -96,7 +100,6 @@ func makeServer(config Config) (*Server, error) {
 	}
 	sshmux := &Server{
 		Address:       config.Address,
-		Banner:        config.SSH.Banner,
 		SSHConfig:     sshConfig,
 		Authenticator: makeAuthenticator(config.Auth, config.Recovery),
 		LogWriter:     logWriter,
@@ -173,10 +176,14 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
 	var upstream *UpstreamInformation
-	if s.Banner != "" {
-		err := session.Downstream.SendBanner(s.Banner)
-		if err != nil {
-			return err
+	// Stage 0: Send SSH banner if configured
+	if s.SSHConfig.BannerCallback != nil {
+		// We can ensure that the argument is unused in BannerCallback
+		msg := s.SSHConfig.BannerCallback(nil)
+		if msg != "" {
+			if err := session.Downstream.SendBanner(msg); err != nil {
+				return err
+			}
 		}
 	}
 	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
