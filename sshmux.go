@@ -154,7 +154,9 @@ func (s *Server) handler(conn net.Conn) {
 		slog.String("remote_ip", conn.RemoteAddr().String()),
 		slog.String("client_type", "SSH"),
 	)
-	defer logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
+	defer func() {
+		logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
+	}()
 
 	select {
 	case <-s.ctx.Done():
