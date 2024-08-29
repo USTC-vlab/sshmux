@@ -158,16 +158,21 @@ func (s *Server) handler(conn net.Conn) {
 		logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
 	}()
 
+	if err := s.Handshake(session); err != nil {
+		return
+	}
+	logger = logger.With(
+		slog.String("username", session.Downstream.User()),
+		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
+		slog.Bool("authenticated", true),
+	)
+
 	select {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(session)
-		if err != nil {
+		if err := session.RunPipe(); err != nil {
 			log.Println("runPipeSession:", err)
-		}
-		for _, attr := range attrs {
-			logger = logger.With(attr)
 		}
 	}
 }
@@ -332,19 +337,6 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			return nil
 		}
 	}
-}
-
-func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
-	err := s.Handshake(session)
-	if err != nil {
-		return nil, err
-	}
-	attrs := []slog.Attr{
-		slog.String("username", session.Downstream.User()),
-		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
-		slog.Bool("authenticated", true),
-	}
-	return attrs, session.RunPipe()
 }
 
 func (s *Server) Start() error {
