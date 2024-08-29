@@ -26,7 +26,6 @@ type Server struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	Address        string
-	Banner         string
 	SSHConfig      *ssh.ServerConfig
 	Authenticator  Authenticator
 	LogWriter      io.Writer
@@ -65,8 +64,10 @@ func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
 
 func makeServer(config Config) (*Server, error) {
 	sshConfig := &ssh.ServerConfig{
-		ServerVersion:           "SSH-2.0-taokystrong",
-		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
+		ServerVersion: "SSH-2.0-taokystrong",
+		BannerCallback: func(conn ssh.ConnMetadata) string {
+			return config.SSH.Banner
+		},
 	}
 	for _, keyConf := range config.SSH.HostKeys {
 		key, err := validateKey(keyConf)
@@ -99,7 +100,6 @@ func makeServer(config Config) (*Server, error) {
 	}
 	sshmux := &Server{
 		Address:       config.Address,
-		Banner:        config.SSH.Banner,
 		SSHConfig:     sshConfig,
 		Authenticator: makeAuthenticator(config.Auth, config.Recovery),
 		LogWriter:     logWriter,
@@ -158,16 +158,21 @@ func (s *Server) handler(conn net.Conn) {
 		logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
 	}()
 
+	if err := s.Handshake(session); err != nil {
+		return
+	}
+	logger = logger.With(
+		slog.String("username", session.Downstream.User()),
+		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
+		slog.Bool("authenticated", true),
+	)
+
 	select {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(session)
-		if err != nil {
+		if err := session.RunPipe(); err != nil {
 			log.Println("runPipeSession:", err)
-		}
-		for _, attr := range attrs {
-			logger = logger.With(attr)
 		}
 	}
 }
@@ -176,10 +181,14 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
 	var upstream *UpstreamInformation
-	if s.Banner != "" {
-		err := session.Downstream.SendBanner(s.Banner)
-		if err != nil {
-			return err
+	// Stage 0: Send SSH banner if configured
+	if s.SSHConfig.BannerCallback != nil {
+		// We can ensure that the argument is unused in BannerCallback
+		msg := s.SSHConfig.BannerCallback(nil)
+		if msg != "" {
+			if err := session.Downstream.SendBanner(msg); err != nil {
+				return err
+			}
 		}
 	}
 	// Stage 1: Get publickey or keyboard-interactive answers, and authenticate the user with with API
@@ -328,19 +337,6 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			return nil
 		}
 	}
-}
-
-func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
-	err := s.Handshake(session)
-	if err != nil {
-		return nil, err
-	}
-	attrs := []slog.Attr{
-		slog.String("username", session.Downstream.User()),
-		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
-		slog.Bool("authenticated", true),
-	}
-	return attrs, session.RunPipe()
 }
 
 func (s *Server) Start() error {
