@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/pires/go-proxyproto"
 )
 
@@ -32,7 +33,7 @@ func localhostTCPAddr(port int) *net.TCPAddr {
 var enableProxy bool
 
 func initHttp(sshPrivateKey []byte) {
-	sshAPIHandler := func(w http.ResponseWriter, r *http.Request) {
+	sshAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Cannot read body", http.StatusBadRequest)
@@ -44,16 +45,16 @@ func initHttp(sshPrivateKey []byte) {
 			return
 		}
 
-		res := &AuthResponse{
-			Status:     "ok",
-			Id:         1141919,
-			PrivateKey: string(sshPrivateKey),
+		res := map[string]any{
+			"status":      "ok",
+			"vmid":        1141919,
+			"private_key": string(sshPrivateKey),
 		}
 		if enableProxy {
-			res.Address = sshdProxiedAddr.String()
-			res.ProxyProtocol = 2
+			res["address"] = sshdProxiedAddr.String()
+			res["proxy_protocol"] = 2
 		} else {
-			res.Address = sshdServerAddr.String()
+			res["address"] = sshdServerAddr.String()
 		}
 
 		jsonRes, err := json.Marshal(res)
@@ -65,9 +66,46 @@ func initHttp(sshPrivateKey []byte) {
 		w.Write(jsonRes)
 	}
 
-	http.HandleFunc("/ssh", sshAPIHandler)
+	authAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Cannot read body", http.StatusBadRequest)
+			return
+		}
+		var dat map[string]interface{}
+		if err := json.Unmarshal(body, &dat); err != nil {
+			http.Error(w, "Not JSON", http.StatusBadRequest)
+			return
+		}
 
-	if err := http.ListenAndServe(apiServerAddr.String(), nil); err != nil {
+		res := map[string]any{
+			"upstream": map[string]any{
+				"host":        sshdServerAddr.IP.String(),
+				"port":        sshdServerAddr.Port,
+				"private_key": string(sshPrivateKey),
+			},
+		}
+		if enableProxy {
+			res["proxy"] = map[string]any{
+				"host": sshdProxiedAddr.IP.String(),
+				"port": sshdProxiedAddr.Port,
+			}
+		}
+
+		jsonRes, err := json.Marshal(res)
+		if err != nil {
+			http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonRes)
+	}
+
+	router := httprouter.New()
+	router.POST("/ssh", sshAPIHandler)
+	router.POST("/v1/auth/:name", authAPIHandler)
+
+	if err := http.ListenAndServe(apiServerAddr.String(), router); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -229,7 +267,7 @@ func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, p
 
 func TestSSHClientConnection(t *testing.T) {
 	initEnv(t)
-	configFiles := []string{"config.toml", "config.json"}
+	configFiles := []string{"config.toml", "legacy.toml", "config.json"}
 
 	for _, configFile := range configFiles {
 		// start sshmux server

@@ -19,14 +19,18 @@ base64 = "LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0KYjNCbGJuTnphQzFyWlhrdG
 path = "fixtures/ssh_host_rsa_key"
 
 [auth]
-endpoint = "http://127.0.0.1:5000"
-version = "v1"
-headers = [
-    { name = "Authorization", value = "ApiKey 12345678" },
-]
+endpoint = "http://127.0.0.1:5000/ssh"
+version = "legacy"
+# Legacy settings
+token = "token"
+all-username-nopassword = true
+usernames-nopassword = ["vlab", "ubuntu", "root"]
+invalid-usernames = ["用户名"]
+invalid-username-message = "Invalid username %s. Please check https://vlab.ustc.edu.cn/docs/login/ssh/#username for more information."
 
 [logger]
-enabled = false
+enabled = true
+endpoint = "udp://127.0.0.1:5556"
 
 [proxy-protocol]
 enabled = true
