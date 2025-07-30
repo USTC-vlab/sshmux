@@ -173,7 +173,7 @@ func (s *Server) handler(conn net.Conn) {
 		return
 	default:
 		attrs, err := s.RunPipeSession(session)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
 		}
 		for _, attr := range attrs {
