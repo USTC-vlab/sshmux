@@ -34,6 +34,7 @@ func localhostTCPAddr(port int) *net.TCPAddr {
 }
 
 var enableProxy bool
+var inited bool
 
 func initHttp(sshPrivateKey []byte) {
 	sshAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -193,6 +194,9 @@ func initDownstreamProxyServer() {
 }
 
 func initEnv(t *testing.T) {
+	if inited {
+		return
+	}
 	// SSHD privilege separation directory
 	os.MkdirAll("/run/sshd", 0o755)
 
@@ -215,6 +219,7 @@ func initEnv(t *testing.T) {
 	go initHttp(privateKey)
 	go initUpstreamProxyServer()
 	go initDownstreamProxyServer()
+	inited = true
 }
 
 func onetimeSSHDServer(t *testing.T) *exec.Cmd {
