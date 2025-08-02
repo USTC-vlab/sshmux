@@ -328,7 +328,6 @@ auth_requests:
 	if err != nil {
 		return err
 	}
-	fmt.Println(upstream.Address, upstream.Signer, upstream.Password)
 	// Firstly try publickey or password
 	if upstream.Signer != nil {
 		err = session.Upstream.WriteAuthRequestPublicKey(user, upstream.Signer)
