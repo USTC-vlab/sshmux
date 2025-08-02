@@ -9,12 +9,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/pires/go-proxyproto"
+	"golang.org/x/crypto/ssh"
 )
 
 var sshmuxProxyAddr *net.TCPAddr = localhostTCPAddr(8122)
@@ -265,6 +268,61 @@ func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, p
 	waitForSSHD(t, cmd)
 }
 
+func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+	challenge := func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+		answers = make([]string, len(questions))
+		for i, q := range questions {
+			if strings.Contains(q, "Vlab username") {
+				answers[i] = "testuser"
+			} else if strings.Contains(q, "Vlab password") {
+				answers[i] = "testpassword"
+			} else if strings.Contains(q, "UNIX password") {
+				answers[i] = "testunixpassword"
+			} else {
+				t.Fatalf("Unexpected question: %s", q)
+			}
+		}
+		return answers, nil
+	}
+
+	enableProxy = proxy
+	cmd := onetimeSSHDServer(t)
+	time.Sleep(100 * time.Millisecond)
+
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatalf("failed to get current user: %v", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: currentUser.Username,
+		Auth: []ssh.AuthMethod{
+			ssh.KeyboardInteractive(challenge),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+
+	client, err := ssh.Dial("tcp", address.String(), config)
+	if err != nil {
+		t.Fatal(fmt.Sprintf("%s: failed to dial: ", description), err)
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(fmt.Sprintf("%s: failed to create session: ", description), err)
+	}
+
+	if err := session.Run("uname"); err != nil {
+		t.Fatal(fmt.Sprintf("%s: failed to run command: ", description), err)
+	}
+
+	session.Close()
+	client.Close()
+
+	waitForSSHD(t, cmd)
+}
+
 func TestSSHClientConnection(t *testing.T) {
 	initEnv(t)
 	configFiles := []string{"config.toml", "legacy.toml", "config.json"}
@@ -295,5 +353,37 @@ func TestSSHClientConnection(t *testing.T) {
 
 		// test sshmux with two-way proxy
 		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
+	}
+}
+
+func TestLegacySSHChallengeClientConnection(t *testing.T) {
+	initEnv(t)
+	configFiles := []string{"legacy.toml", "config.json"}
+
+	for _, configFile := range configFiles {
+		// start sshmux server
+		sshmux, err := sshmuxServer(filepath.Join("fixtures", configFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = sshmux.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sshmux.Shutdown()
+
+		// we can't do sanity check here as default ssh server does not support challenge-response authentication
+
+		// test sshmux
+		testWithGolangSSHChallengeClient(t, sshmuxServerAddr, "sshmux", false)
+
+		// test sshmux with upstream proxy
+		testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false)
+
+		// test sshmux with downstream proxy
+		testWithGolangSSHChallengeClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true)
+
+		// test sshmux with two-way proxy
+		testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
 	}
 }
