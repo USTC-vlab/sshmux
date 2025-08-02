@@ -99,9 +99,9 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 		requireUnixPassword := !auth.PasswordPolicy.AllUsernameNoPassword &&
 			!slices.Contains(auth.Recovery.Usernames, username) &&
 			!slices.Contains(auth.PasswordPolicy.UsernamesNoPassword, username)
-		username, has_username := request.Payload["username"]
-		password, has_password := request.Payload["password"]
-		if !has_username || !has_password {
+		vlab_username, has_vlab_username := request.Payload["username"]
+		vlab_password, has_vlab_password := request.Payload["password"]
+		if !has_vlab_username || !has_vlab_password {
 			challenge := AuthChallenge{
 				Instruction: "Please enter Vlab username & password.",
 				Fields: []AuthChallengeField{
@@ -123,7 +123,7 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 			resp := AuthResponse{Challenges: []AuthChallenge{challenge}}
 			return 401, &resp, nil
 		}
-		upstream, err = auth.AuthUserWithUserPass(username, password, username)
+		upstream, err = auth.AuthUserWithUserPass(vlab_username, vlab_password, username)
 		if err != nil {
 			return 500, nil, err
 		}
