@@ -132,24 +132,24 @@ func removePublicKeyMethod(methods []string) []string {
 	return res
 }
 
-func parsePrivateKey(key string, cert string) ssh.Signer {
+func parsePrivateKey(key string, cert string) (ssh.Signer, error) {
 	if key == "" {
-		return nil
+		return nil, nil
 	}
 	signer, err := ssh.ParsePrivateKey([]byte(key))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	if cert == "" {
-		return signer
+		return signer, nil
 	}
 	pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(cert))
 	if err != nil {
-		return signer
+		return signer, err
 	}
 	certSigner, err := ssh.NewCertSigner(pk.(*ssh.Certificate), signer)
 	if err != nil {
-		return signer
+		return signer, err
 	}
-	return certSigner
+	return certSigner, nil
 }

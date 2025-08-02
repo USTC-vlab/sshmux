@@ -219,8 +219,12 @@ auth_requests:
 				if upstreamResp.Port == 0 {
 					upstreamResp.Port = 22
 				}
+				signer, err := parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate)
+				if err != nil {
+					return fmt.Errorf("failed to parse private key for user %s: %v", user, err)
+				}
 				upstream = &upstreamInformation{
-					Signer:   parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate),
+					Signer:   signer,
 					Password: upstreamResp.Password,
 				}
 				upstream.Address = net.JoinHostPort(upstreamResp.Host, strconv.Itoa(int(upstreamResp.Port)))
@@ -324,6 +328,7 @@ auth_requests:
 	if err != nil {
 		return err
 	}
+	fmt.Println(upstream.Address, upstream.Signer, upstream.Password)
 	// Firstly try publickey or password
 	if upstream.Signer != nil {
 		err = session.Upstream.WriteAuthRequestPublicKey(user, upstream.Signer)
