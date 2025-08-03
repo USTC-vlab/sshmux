@@ -99,9 +99,9 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 		requireUnixPassword := !auth.PasswordPolicy.AllUsernameNoPassword &&
 			!slices.Contains(auth.Recovery.Usernames, username) &&
 			!slices.Contains(auth.PasswordPolicy.UsernamesNoPassword, username)
-		vlab_username, has_vlab_username := request.Payload["username"]
-		vlab_password, has_vlab_password := request.Payload["password"]
-		if !has_vlab_username || !has_vlab_password {
+		vlabUsername, hasVlabUsername := request.Payload["username"]
+		vlabPassword, hasVlabPassword := request.Payload["password"]
+		if !hasVlabUsername || !hasVlabPassword {
 			challenge := AuthChallenge{
 				Instruction: "Please enter Vlab username & password.",
 				Fields: []AuthChallengeField{
@@ -112,8 +112,8 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 			resp := AuthResponse{Challenges: []AuthChallenge{challenge}}
 			return 401, &resp, nil
 		}
-		_, has_unix_password := request.Payload["unix_password"]
-		if requireUnixPassword && !has_unix_password {
+		_, hasUnixPassword := request.Payload["unix_password"]
+		if requireUnixPassword && !hasUnixPassword {
 			challenge := AuthChallenge{
 				Instruction: "Please enter UNIX password.",
 				Fields: []AuthChallengeField{
@@ -123,7 +123,7 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 			resp := AuthResponse{Challenges: []AuthChallenge{challenge}}
 			return 401, &resp, nil
 		}
-		upstream, err = auth.AuthUserWithUserPass(vlab_username, vlab_password, username)
+		upstream, err = auth.AuthUserWithUserPass(vlabUsername, vlabPassword, username)
 		if err != nil {
 			return 500, nil, err
 		}
@@ -142,9 +142,9 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 				Password:    upstream.Password,
 			},
 		}
-		unix_password, has_unix_password := request.Payload["unix_password"]
-		if has_unix_password {
-			resp.Upstream.Password = &unix_password
+		unixPassword, hasUnixPassword := request.Payload["unix_password"]
+		if hasUnixPassword {
+			resp.Upstream.Password = &unixPassword
 		}
 		if upstream.ProxyProtocol > 0 {
 			protocolVersion := fmt.Sprintf("v%d", upstream.ProxyProtocol)
