@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -324,6 +325,9 @@ func TestMethodInvalidAlgorithm(t *testing.T) {
 }
 
 func TestClientHMAC(t *testing.T) {
+	supportedAlgos := SupportedAlgorithms()
+	insecureAlgos := InsecureAlgorithms()
+	supportedMACs := append(supportedAlgos.MACs, insecureAlgos.MACs...)
 	for _, mac := range supportedMACs {
 		config := &ClientConfig{
 			User: "testuser",
@@ -349,7 +353,7 @@ func TestClientUnsupportedCipher(t *testing.T) {
 			PublicKeys(),
 		},
 		Config: Config{
-			Ciphers: []string{"aes128-cbc"}, // not currently supported
+			Ciphers: []string{"unsupported-cipher"}, // not currently supported
 		},
 	}
 	if err := tryAuth(t, config); err == nil {
@@ -1211,7 +1215,7 @@ func (cb configurablePublicKeyCallback) auth(session []byte, user string, c pack
 	if err != nil {
 		return authFailure, nil, err
 	}
-	if success == authSuccess || !contains(methods, cb.method()) {
+	if success == authSuccess || !slices.Contains(methods, cb.method()) {
 		return success, methods, err
 	}
 
