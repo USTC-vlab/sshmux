@@ -4,7 +4,7 @@ go 1.24.0
 
 toolchain go1.24.2
 
-require golang.org/x/crypto v0.43.0
+require golang.org/x/crypto v0.45.0
 
 require github.com/libp2p/go-reuseport v0.4.0
 
@@ -14,6 +14,6 @@ require github.com/pelletier/go-toml/v2 v2.2.2
 
 require github.com/julienschmidt/httprouter v1.3.0
 
-require golang.org/x/sys v0.37.0 // indirect
+require golang.org/x/sys v0.38.0 // indirect
 
 replace golang.org/x/crypto => ./crypto
