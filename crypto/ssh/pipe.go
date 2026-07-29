@@ -6,13 +6,9 @@ package ssh
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 )
-
-// Helper functions to export variables from this module
-func DefaultPubKeyAuthAlgos() []string {
-	return supportedPubKeyAuthAlgos
-}
 
 type Downstream struct {
 	*connection
@@ -21,6 +17,7 @@ type Downstream struct {
 type Upstream struct {
 	*connection
 	extensions map[string][]byte
+	rand       io.Reader
 }
 
 type PipeSession struct {
@@ -312,6 +309,7 @@ func (c *Upstream) handshakeBeforeAuth(addr string, config *ClientConfig) error 
 	// END (*connection).clientHandshake
 
 	c.extensions = extensions
+	c.rand = config.Rand
 	return nil
 }
 
@@ -351,7 +349,6 @@ func (c *Upstream) ReadAuthResult() (*AuthResult, error) {
 }
 
 func (c *Upstream) WriteAuthRequestPublicKey(user string, signer Signer) error {
-	rand := c.transport.config.Rand
 	session := c.transport.getSessionID()
 
 	pub := signer.PublicKey()
@@ -366,7 +363,7 @@ func (c *Upstream) WriteAuthRequestPublicKey(user string, signer Signer) error {
 		Service: serviceSSH,
 		Method:  "publickey",
 	}, algo, pubKey)
-	sign, err := as.SignWithAlgorithm(rand, data, underlyingAlgo(algo))
+	sign, err := as.SignWithAlgorithm(c.rand, data, underlyingAlgo(algo))
 	if err != nil {
 		return err
 	}
