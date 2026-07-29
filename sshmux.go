@@ -73,7 +73,7 @@ func validateKey(config SSHKeyConfig) (ssh.Signer, error) {
 func makeServer(config Config) (*Server, error) {
 	sshConfig := &ssh.ServerConfig{
 		ServerVersion:           "SSH-2.0-taokystrong",
-		PublicKeyAuthAlgorithms: ssh.DefaultPubKeyAuthAlgos(),
+		PublicKeyAuthAlgorithms: ssh.SupportedAlgorithms().PublicKeyAuths,
 	}
 	for _, keyConf := range config.SSH.HostKeys {
 		key, err := validateKey(keyConf)
