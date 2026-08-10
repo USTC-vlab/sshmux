@@ -464,7 +464,7 @@ func pipe(dst, src packetConn, handlePing bool) error {
 }
 
 func (s *PipeSession) RunPipe() error {
-	c := make(chan error)
+	c := make(chan error, 2)
 	go func() {
 		defer s.Downstream.transport.Close()
 		c <- pipe(s.Downstream.transport, s.Upstream.transport, false)
