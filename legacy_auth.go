@@ -52,6 +52,7 @@ type LegacyAuthenticator struct {
 	Recovery       RecoveryConfig
 	UsernamePolicy UsernamePolicyConfig
 	PasswordPolicy PasswordPolicyConfig
+	Client         *http.Client
 	Headers        http.Header
 }
 
@@ -72,6 +73,7 @@ func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAut
 			AllUsernameNoPassword: auth.AllUsernameNoPassword,
 			UsernamesNoPassword:   auth.UsernamesNoPassword,
 		},
+		Client:  &http.Client{Timeout: timeoutFromSeconds(auth.TimeoutSeconds, defaultAuthTimeout)},
 		Headers: headers,
 	}
 }
@@ -167,7 +169,7 @@ func (auth LegacyAuthenticator) AuthUser(request any, username string) (*LegacyA
 	req.Header = auth.Headers.Clone()
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := auth.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}

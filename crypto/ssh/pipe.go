@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 )
 
 type Downstream struct {
@@ -437,6 +438,21 @@ func (s *PipeSession) Close() {
 	if s.Upstream != nil {
 		s.Upstream.Close()
 	}
+}
+
+// SetDeadline sets the deadline on both sides of the proxied connection.
+func (s *PipeSession) SetDeadline(deadline time.Time) error {
+	if s.Downstream != nil {
+		if err := s.Downstream.sshConn.conn.SetDeadline(deadline); err != nil {
+			return err
+		}
+	}
+	if s.Upstream != nil {
+		if err := s.Upstream.sshConn.conn.SetDeadline(deadline); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pipe(dst, src packetConn, handlePing bool) error {

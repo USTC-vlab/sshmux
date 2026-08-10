@@ -28,20 +28,23 @@ General settings configure the `sshmux` service. They are top-level settings in 
 
 SSH settings configure the integrated SSH server in `sshmux`. They are grouped under `ssh` in the TOML file.
 
-| Key         | Type       | Description                                                        | Required | Example                                            |
-| ----------- | ---------- | ------------------------------------------------------------------ | -------- | -------------------------------------------------- |
-| `banner`    | `string`   | SSH banner to send to downstream.                                  | No       | `"Welcome to Vlab\n"`                              |
-| `host-keys` | `[]SSHKey` | Paths to SSH host key files with which `sshmux` identifies itself. | Yes      | See [`fixtures/config.toml`](fixtures/config.toml) |
+| Key                         | Type       | Description                                                                          | Required | Example                                            |
+| --------------------------- | ---------- | ------------------------------------------------------------------------------------ | -------- | -------------------------------------------------- |
+| `banner`                    | `string`   | SSH banner to send to downstream.                                                    | No       | `"Welcome to Vlab\n"`                              |
+| `host-keys`                 | `[]SSHKey` | Paths to SSH host key files with which `sshmux` identifies itself.                   | Yes      | See [`fixtures/config.toml`](fixtures/config.toml) |
+| `handshake-timeout-seconds` | `uint`     | Deadline for the complete downstream SSH handshake and authentication. Defaults to 30 seconds. | No | `30` |
+| `upstream-timeout-seconds`  | `uint`     | Deadline for connecting to and authenticating with the upstream SSH server. Defaults to 30 seconds. | No | `30` |
 
 ### Auth Settings
 
 Auth settings configures the authentication and authorization API used by `sshmux`. They are grouped under `auth` in the TOML file.
 
-| Key        | Type           | Description                                                                | Required | Example                                            |
-| ---------- | -------------- | -------------------------------------------------------------------------- | -------- | -------------------------------------------------- |
-| `endpoint` | `string`       | Endpoint URL that `sshmux` will use for authentication and authorization.  | Yes      | `"http://127.0.0.1:5000/ssh"`                      |
-| `version`  | `string`       | Auth endpoint API version (`"legacy"`, `"v1"`). Defaults to `"legacy"`.    | No       | `"v1"`                                             |
-| `headers`  | `[]HTTPHeader` | Extra HTTP headers to send to API server.                                  | No       | See [`fixtures/config.toml`](fixtures/config.toml) |
+| Key               | Type           | Description                                                               | Required | Example                                            |
+| ----------------- | -------------- | ------------------------------------------------------------------------- | -------- | -------------------------------------------------- |
+| `endpoint`        | `string`       | Endpoint URL that `sshmux` will use for authentication and authorization. | Yes      | `"http://127.0.0.1:5000/ssh"`                      |
+| `version`         | `string`       | Auth endpoint API version (`"legacy"`, `"v1"`). Defaults to `"legacy"`.   | No       | `"v1"`                                             |
+| `headers`         | `[]HTTPHeader` | Extra HTTP headers to send to API server.                                 | No       | See [`fixtures/config.toml`](fixtures/config.toml) |
+| `timeout-seconds` | `uint`         | Timeout for a complete authentication API request. Defaults to 30 seconds. | No      | `30`                                               |
 
 #### Legacy Auth Settings
 

@@ -22,17 +22,25 @@ import (
 )
 
 type Server struct {
-	listener      net.Listener
-	wg            sync.WaitGroup
-	ctx           context.Context
-	cancel        context.CancelFunc
-	Address       string
-	Banner        string
-	SSHConfig     *ssh.ServerConfig
-	Authenticator Authenticator
-	LogWriter     io.Writer
-	ProxyPolicy   ProxyPolicyConfig
+	listener         net.Listener
+	wg               sync.WaitGroup
+	ctx              context.Context
+	cancel           context.CancelFunc
+	Address          string
+	Banner           string
+	SSHConfig        *ssh.ServerConfig
+	Authenticator    Authenticator
+	LogWriter        io.Writer
+	ProxyPolicy      ProxyPolicyConfig
+	HandshakeTimeout time.Duration
+	UpstreamTimeout  time.Duration
 }
+
+const (
+	defaultHandshakeTimeout = 30 * time.Second
+	defaultAuthTimeout      = 30 * time.Second
+	defaultUpstreamTimeout  = 30 * time.Second
+)
 
 type upstreamInformation struct {
 	Address          string
@@ -116,12 +124,14 @@ func makeServer(config Config) (*Server, error) {
 		}
 	}
 	sshmux := &Server{
-		Address:       config.Address,
-		Banner:        config.SSH.Banner,
-		SSHConfig:     sshConfig,
-		Authenticator: authenticator,
-		LogWriter:     logWriter,
-		ProxyPolicy:   proxyPolicyConfig,
+		Address:          config.Address,
+		Banner:           config.SSH.Banner,
+		SSHConfig:        sshConfig,
+		Authenticator:    authenticator,
+		LogWriter:        logWriter,
+		ProxyPolicy:      proxyPolicyConfig,
+		HandshakeTimeout: timeoutFromSeconds(config.SSH.HandshakeTimeoutSeconds, defaultHandshakeTimeout),
+		UpstreamTimeout:  timeoutFromSeconds(config.SSH.UpstreamTimeoutSeconds, defaultUpstreamTimeout),
 	}
 	return sshmux, nil
 }
@@ -152,6 +162,9 @@ func (s *Server) handler(conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
 
+	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
+		return
+	}
 	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
 	if err != nil {
 		return
@@ -303,8 +316,17 @@ auth_requests:
 		}
 	}
 	// Stage 2: connect to upstream
-	conn, err := net.Dial("tcp", upstream.Address)
+	conn, err := net.DialTimeout("tcp", upstream.Address, s.UpstreamTimeout)
 	if err != nil {
+		return err
+	}
+	upstreamInitialized := false
+	defer func() {
+		if !upstreamInitialized {
+			conn.Close()
+		}
+	}()
+	if err := conn.SetDeadline(time.Now().Add(s.UpstreamTimeout)); err != nil {
 		return err
 	}
 	if upstream.ProxyProtocol != nil {
@@ -328,6 +350,7 @@ auth_requests:
 	if err != nil {
 		return err
 	}
+	upstreamInitialized = true
 	// Firstly try publickey or password
 	if upstream.Signer != nil {
 		err = session.Upstream.WriteAuthRequestPublicKey(user, upstream.Signer)
@@ -388,6 +411,9 @@ auth_requests:
 func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
 	err := s.Handshake(session)
 	if err != nil {
+		return nil, err
+	}
+	if err := session.SetDeadline(time.Time{}); err != nil {
 		return nil, err
 	}
 	attrs := []slog.Attr{

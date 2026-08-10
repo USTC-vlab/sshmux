@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -75,6 +76,7 @@ func makeAuthenticator(auth AuthConfig) (Authenticator, error) {
 		Endpoint: auth_url,
 		Version:  auth.Version,
 		Headers:  headers,
+		Client:   &http.Client{Timeout: timeoutFromSeconds(auth.TimeoutSeconds, defaultAuthTimeout)},
 	}
 	return &authenticator, nil
 }
@@ -83,6 +85,7 @@ type RESTfulAuthenticator struct {
 	Endpoint *url.URL
 	Version  string
 	Headers  http.Header
+	Client   *http.Client
 }
 
 func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
@@ -104,7 +107,7 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := auth.Client.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -120,6 +123,13 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 		return res.StatusCode, nil, err
 	}
 	return res.StatusCode, &response, nil
+}
+
+func timeoutFromSeconds(seconds uint, defaultTimeout time.Duration) time.Duration {
+	if seconds == 0 {
+		return defaultTimeout
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func removePublicKeyMethod(methods []string) []string {

@@ -6,8 +6,10 @@ import (
 )
 
 type SSHConfig struct {
-	Banner   string         `toml:"banner,omitempty"`
-	HostKeys []SSHKeyConfig `toml:"host-keys"`
+	Banner                  string         `toml:"banner,omitempty"`
+	HostKeys                []SSHKeyConfig `toml:"host-keys"`
+	HandshakeTimeoutSeconds uint           `toml:"handshake-timeout-seconds,omitempty"`
+	UpstreamTimeoutSeconds  uint           `toml:"upstream-timeout-seconds,omitempty"`
 }
 
 type SSHKeyConfig struct {
@@ -17,9 +19,10 @@ type SSHKeyConfig struct {
 }
 
 type AuthConfig struct {
-	Endpoint string                 `toml:"endpoint"`
-	Version  string                 `toml:"version,omitempty"`
-	Headers  []AuthHTTPHeaderConfig `toml:"headers,omitempty"`
+	Endpoint       string                 `toml:"endpoint"`
+	Version        string                 `toml:"version,omitempty"`
+	Headers        []AuthHTTPHeaderConfig `toml:"headers,omitempty"`
+	TimeoutSeconds uint                   `toml:"timeout-seconds,omitempty"`
 	// The following settings are for legacy API only
 	Token                  string   `toml:"token,omitempty"`
 	InvalidUsernames       []string `toml:"invalid-usernames,omitempty"`
