@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"os/user"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,13 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
+
+// testConnection is the connection identity used by the metric assertions.
+var testConnection = connectionInfo{
+	Username:    "vlab",
+	Upstream:    "10.0.0.7:22",
+	Established: true,
+}
 
 // prometheusMetrics starts a Metrics instance with only the Prometheus
 // endpoint enabled, bound to an ephemeral port.
@@ -75,10 +84,10 @@ func TestMetricsDisabled(t *testing.T) {
 	// Every record method must stay a no-op.
 	ctx := context.Background()
 	metrics.ConnectionAccepted(ctx)
-	metrics.HandshakeFinished(ctx, nil, time.Second)
+	metrics.HandshakeFinished(ctx, testConnection, nil, time.Second)
 	metrics.UpstreamDialed(ctx, io.EOF)
 	metrics.AuthFinished(ctx, "publickey", 200, nil, time.Second)
-	metrics.ConnectionClosed(ctx, nil, time.Second)
+	metrics.ConnectionClosed(ctx, testConnection, nil, time.Second)
 	metrics.Shutdown(ctx)
 }
 
@@ -94,18 +103,18 @@ func TestMetricsPrometheusEndpoint(t *testing.T) {
 
 	metrics.ConnectionAccepted(ctx)
 	metrics.ConnectionAccepted(ctx)
-	metrics.HandshakeFinished(ctx, nil, 100*time.Millisecond)
+	metrics.HandshakeFinished(ctx, testConnection, nil, 100*time.Millisecond)
 	metrics.UpstreamDialed(ctx, nil)
-	metrics.ConnectionClosed(ctx, nil, time.Second)
-	metrics.ConnectionClosed(ctx, os.ErrDeadlineExceeded, 2*time.Second)
+	metrics.ConnectionClosed(ctx, testConnection, nil, time.Second)
+	metrics.ConnectionClosed(ctx, testConnection, os.ErrDeadlineExceeded, 2*time.Second)
 
 	body := scrape(t, metrics)
-	const group = `result="success"`
+	const group = `result="success",upstream_address="10.0.0.7:22",username="vlab"`
 	for _, want := range []string{
 		`sshmux_connections_total 2`,
 		`sshmux_connections_active 0`,
 		`sshmux_sessions_total{` + group + `} 1`,
-		`sshmux_sessions_total{error_type="timeout",result="failure"} 1`,
+		`sshmux_sessions_total{error_type="timeout",result="failure",upstream_address="10.0.0.7:22",username="vlab"} 1`,
 		`sshmux_upstream_connections_total{result="success"} 1`,
 		`sshmux_session_duration_seconds_count{` + group + `} 1`,
 		`sshmux_handshake_duration_seconds_count{` + group + `} 1`,
@@ -334,6 +343,25 @@ func TestServerMetricsWiring(t *testing.T) {
 		`sshmux_connections_total 1`,
 		`sshmux_connections_active 0`,
 		`sshmux_sessions_total{`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scrape output does not contain %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestConnectionGrouping(t *testing.T) {
+	metrics := prometheusMetrics(t)
+	metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
+	// A connection that failed before authentication has neither a username nor
+	// an upstream, since the auth API never answered.
+	metrics.ConnectionClosed(t.Context(), connectionInfo{}, io.EOF, time.Second)
+
+	body := scrape(t, metrics)
+	for _, want := range []string{
+		`sshmux_sessions_total{result="success",upstream_address="10.0.0.7:22",username="vlab"} 1`,
+		`sshmux_session_duration_seconds_count{result="success",upstream_address="10.0.0.7:22",username="vlab"} 1`,
+		`sshmux_sessions_total{error_type="eof",result="failure",upstream_address="unknown",username="unknown"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scrape output does not contain %q:\n%s", want, body)
@@ -596,4 +624,144 @@ func findAttribute(attrs []attribute.KeyValue, key attribute.Key) (string, bool)
 		}
 	}
 	return "", false
+}
+
+// TestServerMetricsUpstreamGrouping drives a real SSH client through sshmux and
+// checks that the backend address the auth API returned reaches the metrics.
+func TestServerMetricsUpstreamGrouping(t *testing.T) {
+	if _, err := exec.LookPath("sshd"); err != nil {
+		t.Skip("sshd is not available")
+	}
+	initEnv(t)
+	enableProxy = false
+
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshmux, err := makeServer(Config{
+		Address: "127.0.0.1:0",
+		SSH:     SSHConfig{HostKeys: []SSHKeyConfig{{Path: "fixtures/ssh_host_ed25519_key"}}},
+		Auth:    AuthConfig{Endpoint: "http://127.0.0.1:5000", Version: "v1"},
+		Metrics: MetricsConfig{
+			Enabled:    true,
+			Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sshmux.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sshmux.Shutdown()
+
+	sshd := onetimeSSHDServer(t)
+	time.Sleep(100 * time.Millisecond)
+	address := sshmux.Addr().(*net.TCPAddr)
+	sshCommand := exec.Command(
+		"ssh", "-p", fmt.Sprint(address.Port),
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "ControlMaster=no",
+		"-i", "fixtures/ssh_id_rsa",
+		"-o", "IdentityAgent=no",
+		address.IP.String(), "uname")
+	sshCommand.Dir, _ = os.Getwd()
+	if err := sshCommand.Run(); err != nil {
+		t.Fatal("ssh: ", err)
+	}
+	waitForSSHD(t, sshd)
+
+	// The session is recorded once its handler winds down, shortly after the
+	// client exits.
+	want := fmt.Sprintf(`sshmux_sessions_total{result="success",upstream_address=%q,username=%q} 1`,
+		sshdServerAddr.String(), currentUser.Username)
+	deadline := time.Now().Add(5 * time.Second)
+	var body string
+	for time.Now().Before(deadline) {
+		body = scrape(t, sshmux.Metrics)
+		if strings.Contains(body, want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("scrape output does not contain %q:\n%s", want, body)
+}
+
+// countSeries counts the exported sshmux_sessions_total series.
+func countSeries(body string) int {
+	count := 0
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "sshmux_sessions_total{") {
+			count++
+		}
+	}
+	return count
+}
+
+// recordSessions records one session per distinct username, so that each one
+// lands on its own time series.
+func recordSessions(t *testing.T, metrics *Metrics, count int) {
+	t.Helper()
+	for i := range count {
+		info := connectionInfo{
+			Username:    fmt.Sprintf("user%d", i),
+			Upstream:    fmt.Sprintf("10.0.0.%d:22", i),
+			Established: true,
+		}
+		metrics.ConnectionClosed(t.Context(), info, nil, time.Second)
+	}
+}
+
+// TestConnectionGroupingHitsDefaultCap demonstrates why a large deployment has
+// to turn the grouping off: past the SDK's default of 2000 series per
+// instrument, further users stop getting a series of their own.
+func TestConnectionGroupingHitsDefaultCap(t *testing.T) {
+	metrics := prometheusMetrics(t)
+
+	recordSessions(t, metrics, 2500)
+	body := scrape(t, metrics)
+	if !strings.Contains(body, `otel_metric_overflow="true"`) {
+		t.Errorf("scrape output has no overflow series, so the cap was not reached:\n%s", body)
+	}
+	// 1999 users keep a series of their own, the rest share the overflow one.
+	if got := countSeries(body); got != 2000 {
+		t.Errorf("exported %d session series, want 2000", got)
+	}
+}
+
+// TestConnectionGroupingDisabled checks the opt-out large deployments need: the
+// connection metrics collapse to a single series per outcome, no matter how
+// many distinct users connect.
+func TestConnectionGroupingDisabled(t *testing.T) {
+	metrics, err := makeMetrics(MetricsConfig{
+		Enabled:            true,
+		ConnectionGrouping: new(bool),
+		Prometheus:         MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := metrics.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer metrics.Shutdown(t.Context())
+
+	// Well past the SDK default of 2000, which would cap a grouped build.
+	recordSessions(t, metrics, 2500)
+	body := scrape(t, metrics)
+	if strings.Contains(body, `otel_metric_overflow="true"`) {
+		t.Error("scrape output has an overflow series, so the cap was still reached")
+	}
+	if got := countSeries(body); got != 1 {
+		t.Errorf("exported %d session series, want 1", got)
+	}
+	for _, unwanted := range []string{"username=", "upstream_address="} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("scrape output still contains %q:\n%s", unwanted, body)
+		}
+	}
+	if want := `sshmux_sessions_total{result="success"} 2500`; !strings.Contains(body, want) {
+		t.Errorf("scrape output does not contain %q:\n%s", want, body)
+	}
 }

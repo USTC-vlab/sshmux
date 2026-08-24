@@ -54,12 +54,13 @@ type RecoveryConfig struct {
 }
 
 type MetricsConfig struct {
-	Enabled         bool                     `toml:"enabled"`
-	ServiceName     string                   `toml:"service-name,omitempty"`
-	Attributes      []MetricsAttributeConfig `toml:"attributes,omitempty"`
-	IntervalSeconds uint                     `toml:"interval-seconds,omitempty"`
-	OTLP            MetricsOTLPConfig        `toml:"otlp"`
-	Prometheus      MetricsPrometheusConfig  `toml:"prometheus"`
+	Enabled            bool                     `toml:"enabled"`
+	ServiceName        string                   `toml:"service-name,omitempty"`
+	Attributes         []MetricsAttributeConfig `toml:"attributes,omitempty"`
+	IntervalSeconds    uint                     `toml:"interval-seconds,omitempty"`
+	ConnectionGrouping *bool                    `toml:"connection-grouping,omitempty"`
+	OTLP               MetricsOTLPConfig        `toml:"otlp"`
+	Prometheus         MetricsPrometheusConfig  `toml:"prometheus"`
 }
 
 type MetricsAttributeConfig struct {

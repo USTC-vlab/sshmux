@@ -34,6 +34,9 @@ const (
 	defaultPrometheusPath     = "/metrics"
 	metricsShutdownTimeout    = 5 * time.Second
 	metricsScopeName          = "github.com/USTC-vlab/sshmux"
+	// unknownAttributeValue is recorded for a grouping attribute whose value is
+	// not known, e.g. the username of a connection that failed before auth.
+	unknownAttributeValue = "unknown"
 )
 
 const (
@@ -43,10 +46,12 @@ const (
 
 // Attribute keys shared by the instruments below.
 const (
-	attrResult     = attribute.Key("result")
-	attrErrorType  = attribute.Key("error.type")
-	attrAuthMethod = attribute.Key("auth.method")
-	attrAuthStatus = attribute.Key("auth.status")
+	attrResult          = attribute.Key("result")
+	attrErrorType       = attribute.Key("error.type")
+	attrAuthMethod      = attribute.Key("auth.method")
+	attrAuthStatus      = attribute.Key("auth.status")
+	attrUsername        = attribute.Key("username")
+	attrUpstreamAddress = attribute.Key("upstream.address")
 )
 
 var (
@@ -54,12 +59,28 @@ var (
 	resultFailure = attrResult.String("failure")
 )
 
+// connectionInfo is the per-connection state reported to the metrics recorder.
+// Fields are zero until they become known: Username is only set once the client
+// has sent its first auth request, and Upstream only once the auth API has
+// answered.
+type connectionInfo struct {
+	Username string
+	// Upstream is the backend address as host:port, as returned by the auth API
+	// and before any PROXY protocol override.
+	Upstream string
+	// Established records whether the handshake completed.
+	Established bool
+}
+
 // Metrics owns the OpenTelemetry meter provider of an sshmux server, the
 // instruments recorded by it, and the optional Prometheus scrape endpoint.
 // Its record methods are no-ops while metrics are disabled.
 type Metrics struct {
-	enabled  bool
-	provider *sdkmetric.MeterProvider
+	enabled bool
+	// groupConnections reports whether the connection metrics carry the username
+	// and upstream dimensions.
+	groupConnections bool
+	provider         *sdkmetric.MeterProvider
 
 	promAddress  string
 	promPath     string
@@ -78,7 +99,10 @@ type Metrics struct {
 }
 
 func makeMetrics(config MetricsConfig) (*Metrics, error) {
-	metrics := &Metrics{enabled: config.Enabled}
+	metrics := &Metrics{
+		enabled:          config.Enabled,
+		groupConnections: boolOrDefault(config.ConnectionGrouping, true),
+	}
 	if !config.Enabled {
 		return newMetrics(metrics, noop.NewMeterProvider().Meter(metricsScopeName))
 	}
@@ -397,21 +421,21 @@ func (m *Metrics) ConnectionAccepted(ctx context.Context) {
 	m.connectionsActive.Add(ctx, 1)
 }
 
-func (m *Metrics) ConnectionClosed(ctx context.Context, err error, duration time.Duration) {
+func (m *Metrics) ConnectionClosed(ctx context.Context, info connectionInfo, err error, duration time.Duration) {
 	if !m.enabled {
 		return
 	}
 	m.connectionsActive.Add(ctx, -1)
-	attrs := metric.WithAttributeSet(attribute.NewSet(resultAttributes(err)...))
+	attrs := metric.WithAttributeSet(m.connectionAttributeSet(info, err))
 	m.sessionsTotal.Add(ctx, 1, attrs)
 	m.sessionDuration.Record(ctx, duration.Seconds(), attrs)
 }
 
-func (m *Metrics) HandshakeFinished(ctx context.Context, err error, duration time.Duration) {
+func (m *Metrics) HandshakeFinished(ctx context.Context, info connectionInfo, err error, duration time.Duration) {
 	if !m.enabled {
 		return
 	}
-	m.handshakeDuration.Record(ctx, duration.Seconds(), metric.WithAttributeSet(attribute.NewSet(resultAttributes(err)...)))
+	m.handshakeDuration.Record(ctx, duration.Seconds(), metric.WithAttributeSet(m.connectionAttributeSet(info, err)))
 }
 
 func (m *Metrics) UpstreamDialed(ctx context.Context, err error) {
@@ -429,6 +453,20 @@ func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, e
 	set := metric.WithAttributeSet(attribute.NewSet(attrs...))
 	m.authRequestsTotal.Add(ctx, 1, set)
 	m.authDuration.Record(ctx, duration.Seconds(), set)
+}
+
+// connectionAttributeSet combines the outcome of a connection with the two
+// dimensions the connection metrics are grouped by, unless the grouping has
+// been turned off.
+func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribute.Set {
+	attrs := resultAttributes(err)
+	if m.groupConnections {
+		attrs = append(attrs,
+			attrUsername.String(valueOrDefault(info.Username, unknownAttributeValue)),
+			attrUpstreamAddress.String(valueOrDefault(info.Upstream, unknownAttributeValue)),
+		)
+	}
+	return attribute.NewSet(attrs...)
 }
 
 func resultAttributes(err error) []attribute.KeyValue {
@@ -468,6 +506,13 @@ func (a *instrumentedAuthenticator) Auth(request AuthRequest, username string) (
 	status, response, err := a.inner.Auth(request, username)
 	a.metrics.AuthFinished(context.Background(), request.Method, status, err, time.Since(start))
 	return status, response, err
+}
+
+func boolOrDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func valueOrDefault(value string, fallback string) string {

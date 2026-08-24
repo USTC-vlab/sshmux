@@ -32,6 +32,7 @@ interval-seconds = 60
 attributes = [
     { name = "deployment.environment.name", value = "production" },
 ]
+connection-grouping = false
 
 [metrics.otlp]
 enabled = true

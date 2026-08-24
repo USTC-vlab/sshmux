@@ -171,9 +171,9 @@ func (s *Server) handler(conn net.Conn) {
 	connectTime := time.Now()
 	s.Metrics.ConnectionAccepted(s.ctx)
 	var sessionErr error
-	established := false
+	var info connectionInfo
 	defer func() {
-		s.Metrics.ConnectionClosed(s.ctx, sessionErr, time.Since(connectTime))
+		s.Metrics.ConnectionClosed(s.ctx, info, sessionErr, time.Since(connectTime))
 	}()
 
 	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
@@ -201,13 +201,13 @@ func (s *Server) handler(conn net.Conn) {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(session, &established)
+		attrs, err := s.RunPipeSession(session, &info)
 		if err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
 		}
 		// Once the session is up, the client ends it by disconnecting, so only
 		// a failure to establish one counts against the session result.
-		if !established {
+		if !info.Established {
 			sessionErr = err
 		}
 		for _, attr := range attrs {
@@ -243,7 +243,7 @@ func answerChallenges(session *ssh.PipeSession, req *AuthRequest, challenges []A
 	return nil
 }
 
-func (s *Server) Handshake(session *ssh.PipeSession) error {
+func (s *Server) Handshake(session *ssh.PipeSession, info *connectionInfo) error {
 	hasSetUser := false
 	var user string
 	var upstream *upstreamInformation
@@ -270,6 +270,7 @@ auth_requests:
 		if !hasSetUser {
 			user = authReq.User
 			session.Downstream.SetUser(user)
+			info.Username = user
 			hasSetUser = true
 		}
 		req := AuthRequest{
@@ -334,6 +335,9 @@ auth_requests:
 					Password: upstreamResp.Password,
 				}
 				upstream.Address = net.JoinHostPort(upstreamResp.Host, strconv.Itoa(int(upstreamResp.Port)))
+				// Report the backend the API picked, not the PROXY protocol
+				// hop that the address below may be rewritten to.
+				info.Upstream = upstream.Address
 				if resp.Proxy != nil {
 					proxyConfig := *resp.Proxy
 					// parse protocol version
@@ -485,14 +489,14 @@ auth_requests:
 	}
 }
 
-func (s *Server) RunPipeSession(session *ssh.PipeSession, established *bool) ([]slog.Attr, error) {
+func (s *Server) RunPipeSession(session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
 	handshakeTime := time.Now()
-	err := s.Handshake(session)
-	s.Metrics.HandshakeFinished(s.ctx, err, time.Since(handshakeTime))
+	err := s.Handshake(session, info)
+	s.Metrics.HandshakeFinished(s.ctx, *info, err, time.Since(handshakeTime))
 	if err != nil {
 		return nil, err
 	}
-	*established = true
+	info.Established = true
 	if err := session.SetDeadline(time.Time{}); err != nil {
 		return nil, err
 	}

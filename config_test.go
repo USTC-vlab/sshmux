@@ -178,6 +178,9 @@ func checkMetricsTOML(t *testing.T, config Config) {
 		prometheus.Path != "/sshmux/metrics" {
 		t.Errorf("metrics.prometheus = %+v", prometheus)
 	}
+	if metrics.ConnectionGrouping == nil || *metrics.ConnectionGrouping {
+		t.Errorf("metrics.connection-grouping = %v, want an explicit false", metrics.ConnectionGrouping)
+	}
 }
 
 // TestMetricsConfigAbsent checks that a configuration without a metrics group
@@ -189,6 +192,14 @@ func TestMetricsConfigAbsent(t *testing.T) {
 	}
 	if config.Metrics.Enabled || config.Metrics.OTLP.Enabled || config.Metrics.Prometheus.Enabled {
 		t.Errorf("metrics = %+v, want it disabled", config.Metrics)
+	}
+	// An absent connection-grouping has to stay distinguishable from an explicit
+	// false, since the grouping is on by default.
+	if config.Metrics.ConnectionGrouping != nil {
+		t.Errorf("metrics.connection-grouping = %v, want nil", config.Metrics.ConnectionGrouping)
+	}
+	if !boolOrDefault(config.Metrics.ConnectionGrouping, true) {
+		t.Error("an absent connection-grouping must leave the grouping on")
 	}
 }
 
