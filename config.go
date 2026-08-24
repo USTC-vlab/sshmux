@@ -53,11 +53,40 @@ type RecoveryConfig struct {
 	Token     string   `toml:"token,omitempty"`
 }
 
+type MetricsConfig struct {
+	Enabled         bool                     `toml:"enabled"`
+	ServiceName     string                   `toml:"service-name,omitempty"`
+	Attributes      []MetricsAttributeConfig `toml:"attributes,omitempty"`
+	IntervalSeconds uint                     `toml:"interval-seconds,omitempty"`
+	OTLP            MetricsOTLPConfig        `toml:"otlp"`
+	Prometheus      MetricsPrometheusConfig  `toml:"prometheus"`
+}
+
+type MetricsAttributeConfig struct {
+	Name  string `toml:"name"`
+	Value string `toml:"value"`
+}
+
+type MetricsOTLPConfig struct {
+	Enabled        bool               `toml:"enabled"`
+	Protocol       string             `toml:"protocol,omitempty"`
+	Endpoint       string             `toml:"endpoint"`
+	Headers        []HTTPHeaderConfig `toml:"headers,omitempty"`
+	TimeoutSeconds uint               `toml:"timeout-seconds,omitempty"`
+}
+
+type MetricsPrometheusConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Address string `toml:"address,omitempty"`
+	Path    string `toml:"path,omitempty"`
+}
+
 type Config struct {
 	Address       string              `toml:"address"`
 	SSH           SSHConfig           `toml:"ssh"`
 	Auth          AuthConfig          `toml:"auth"`
 	Logger        LoggerConfig        `toml:"logger"`
+	Metrics       MetricsConfig       `toml:"metrics"`
 	ProxyProtocol ProxyProtocolConfig `toml:"proxy-protocol"`
 	Recovery      RecoveryConfig      `toml:"recovery"`
 }

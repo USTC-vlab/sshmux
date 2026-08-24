@@ -16,6 +16,7 @@ var configFixtures = []configFixture{
 	{"fixtures/config.toml", checkConfigTOML},
 	{"fixtures/legacy.toml", checkLegacyTOML},
 	{"fixtures/config.json", checkLegacyJSON},
+	{"fixtures/metrics.toml", checkMetricsTOML},
 }
 
 func TestLoadConfigFixtures(t *testing.T) {
@@ -24,6 +25,10 @@ func TestLoadConfigFixtures(t *testing.T) {
 			config, err := loadConfig(fixture.path)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if fixture.path == "fixtures/metrics.toml" {
+				fixture.check(t, config)
+				return
 			}
 			if config.Address != "0.0.0.0:8022" {
 				t.Errorf("address = %q, want %q", config.Address, "0.0.0.0:8022")
@@ -134,6 +139,56 @@ func checkProxyAndRecovery(t *testing.T, config Config) {
 	if config.Recovery.Address != "172.30.0.101:2222" || len(config.Recovery.Usernames) != 3 ||
 		config.Recovery.Token != "token" {
 		t.Errorf("recovery = %+v", config.Recovery)
+	}
+}
+
+// checkMetricsTOML covers every key of the metrics group.
+func checkMetricsTOML(t *testing.T, config Config) {
+	metrics := config.Metrics
+	if !metrics.Enabled {
+		t.Error("metrics are not enabled")
+	}
+	if metrics.ServiceName != "sshmux-fixture" {
+		t.Errorf("metrics.service-name = %q", metrics.ServiceName)
+	}
+	if metrics.IntervalSeconds != 15 {
+		t.Errorf("metrics.interval-seconds = %d, want 15", metrics.IntervalSeconds)
+	}
+	if len(metrics.Attributes) != 1 || metrics.Attributes[0].Name != "deployment.environment.name" ||
+		metrics.Attributes[0].Value != "staging" {
+		t.Errorf("metrics.attributes = %+v", metrics.Attributes)
+	}
+
+	otlp := metrics.OTLP
+	if !otlp.Enabled || otlp.Protocol != "http" {
+		t.Errorf("metrics.otlp = %+v", otlp)
+	}
+	if otlp.Endpoint != "http://127.0.0.1:4318/v1/metrics" {
+		t.Errorf("metrics.otlp.endpoint = %q, want the full metrics path", otlp.Endpoint)
+	}
+	if otlp.TimeoutSeconds != 5 {
+		t.Errorf("metrics.otlp.timeout-seconds = %d, want 5", otlp.TimeoutSeconds)
+	}
+	if len(otlp.Headers) != 1 || otlp.Headers[0].Name != "Authorization" {
+		t.Errorf("metrics.otlp.headers = %+v", otlp.Headers)
+	}
+
+	prometheus := metrics.Prometheus
+	if !prometheus.Enabled || prometheus.Address != "127.0.0.1:9123" ||
+		prometheus.Path != "/sshmux/metrics" {
+		t.Errorf("metrics.prometheus = %+v", prometheus)
+	}
+}
+
+// TestMetricsConfigAbsent checks that a configuration without a metrics group
+// leaves it switched off.
+func TestMetricsConfigAbsent(t *testing.T) {
+	config, err := loadConfig("fixtures/config.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Metrics.Enabled || config.Metrics.OTLP.Enabled || config.Metrics.Prometheus.Enabled {
+		t.Errorf("metrics = %+v, want it disabled", config.Metrics)
 	}
 }
 
