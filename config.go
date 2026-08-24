@@ -19,10 +19,10 @@ type SSHKeyConfig struct {
 }
 
 type AuthConfig struct {
-	Endpoint       string                 `toml:"endpoint"`
-	Version        string                 `toml:"version,omitempty"`
-	Headers        []AuthHTTPHeaderConfig `toml:"headers,omitempty"`
-	TimeoutSeconds uint                   `toml:"timeout-seconds,omitempty"`
+	Endpoint       string             `toml:"endpoint"`
+	Version        string             `toml:"version,omitempty"`
+	Headers        []HTTPHeaderConfig `toml:"headers,omitempty"`
+	TimeoutSeconds uint               `toml:"timeout-seconds,omitempty"`
 	// The following settings are for legacy API only
 	Token                  string   `toml:"token,omitempty"`
 	InvalidUsernames       []string `toml:"invalid-usernames,omitempty"`
@@ -31,7 +31,7 @@ type AuthConfig struct {
 	UsernamesNoPassword    []string `toml:"usernames-nopassword,omitempty"`
 }
 
-type AuthHTTPHeaderConfig struct {
+type HTTPHeaderConfig struct {
 	Name  string `toml:"name"`
 	Value string `toml:"value"`
 }
