@@ -1,10 +1,12 @@
-FROM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.24 AS build
 
 WORKDIR /go/src/app
 COPY . .
 
 RUN go mod download
-RUN CGO_ENABLED=0 go build -o /go/bin/sshmux -trimpath
+
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /go/bin/sshmux -trimpath
 
 FROM gcr.io/distroless/static-debian13:nonroot
 COPY ./etc/config.example.toml /etc/config.example.toml 
