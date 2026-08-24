@@ -34,6 +34,7 @@ type Server struct {
 	ProxyPolicy      ProxyPolicyConfig
 	HandshakeTimeout time.Duration
 	UpstreamTimeout  time.Duration
+	Metrics          *Metrics
 }
 
 const (
@@ -112,17 +113,21 @@ func makeServer(config Config) (*Server, error) {
 	} else {
 		logWriter = io.Discard
 	}
+	metrics, err := makeMetrics(config.Metrics)
+	if err != nil {
+		return nil, err
+	}
 	var authenticator Authenticator
 	if config.Auth.Version == "" || config.Auth.Version == "legacy" {
 		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery)
 		authenticator = &legacyAuthenticator
 	} else {
-		var err error
 		authenticator, err = makeAuthenticator(config.Auth)
 		if err != nil {
 			return nil, err
 		}
 	}
+	authenticator = &instrumentedAuthenticator{inner: authenticator, metrics: metrics}
 	sshmux := &Server{
 		Address:          config.Address,
 		Banner:           config.SSH.Banner,
@@ -132,6 +137,7 @@ func makeServer(config Config) (*Server, error) {
 		ProxyPolicy:      proxyPolicyConfig,
 		HandshakeTimeout: timeoutFromSeconds(config.SSH.HandshakeTimeoutSeconds, defaultHandshakeTimeout),
 		UpstreamTimeout:  timeoutFromSeconds(config.SSH.UpstreamTimeoutSeconds, defaultUpstreamTimeout),
+		Metrics:          metrics,
 	}
 	return sshmux, nil
 }
@@ -162,11 +168,21 @@ func (s *Server) handler(conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
 
+	connectTime := time.Now()
+	s.Metrics.ConnectionAccepted(s.ctx)
+	var sessionErr error
+	established := false
+	defer func() {
+		s.Metrics.ConnectionClosed(s.ctx, sessionErr, time.Since(connectTime))
+	}()
+
 	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
+		sessionErr = err
 		return
 	}
 	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
 	if err != nil {
+		sessionErr = err
 		return
 	}
 	defer session.Close()
@@ -185,9 +201,14 @@ func (s *Server) handler(conn net.Conn) {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(session)
+		attrs, err := s.RunPipeSession(session, &established)
 		if err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
+		}
+		// Once the session is up, the client ends it by disconnecting, so only
+		// a failure to establish one counts against the session result.
+		if !established {
+			sessionErr = err
 		}
 		for _, attr := range attrs {
 			logger = logger.With(attr)
@@ -372,6 +393,7 @@ auth_requests:
 	}
 	// Stage 2: connect to upstream
 	conn, err := net.DialTimeout("tcp", upstream.Address, s.UpstreamTimeout)
+	s.Metrics.UpstreamDialed(s.ctx, err)
 	if err != nil {
 		return err
 	}
@@ -463,11 +485,14 @@ auth_requests:
 	}
 }
 
-func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
+func (s *Server) RunPipeSession(session *ssh.PipeSession, established *bool) ([]slog.Attr, error) {
+	handshakeTime := time.Now()
 	err := s.Handshake(session)
+	s.Metrics.HandshakeFinished(s.ctx, err, time.Since(handshakeTime))
 	if err != nil {
 		return nil, err
 	}
+	*established = true
 	if err := session.SetDeadline(time.Time{}); err != nil {
 		return nil, err
 	}
@@ -480,9 +505,16 @@ func (s *Server) RunPipeSession(session *ssh.PipeSession) ([]slog.Attr, error) {
 }
 
 func (s *Server) Start() error {
+	// set up the metrics exporters before serving any connection
+	if err := s.Metrics.Start(); err != nil {
+		return err
+	}
 	// set up TCP listener
 	listener, err := reuse.Listen("tcp", s.Address)
 	if err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+		s.Metrics.Shutdown(shutdownCtx)
+		cancel()
 		return err
 	}
 	if len(s.ProxyPolicy.AllowedCIDRs) > 0 || len(s.ProxyPolicy.AllowedHosts) > 0 {
@@ -529,6 +561,14 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// Addr returns the address the server is listening on, or nil before Start.
+func (s *Server) Addr() net.Addr {
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
+}
+
 func (s *Server) Wait() {
 	s.wg.Wait()
 }
@@ -541,4 +581,8 @@ func (s *Server) Shutdown() {
 		s.listener.Close()
 	}
 	s.wg.Wait()
+	// flush the final measurements once no handler can record anymore
+	ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	defer cancel()
+	s.Metrics.Shutdown(ctx)
 }
