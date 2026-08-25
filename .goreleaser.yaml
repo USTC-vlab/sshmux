@@ -13,13 +13,16 @@ builds:
     goarch:
       - amd64
       - arm64
+    goamd64:
+      - v1
+      - v3
     flags:
       - -trimpath
     ldflags:
       - -s -w
 archives:
   - format: binary
-    name_template: "{{ .Binary }}_{{ .Os  }}_{{ .Arch }}"
+    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}{{ if and (eq .Arch \"amd64\") (ne .Amd64 \"v1\") }}{{ .Amd64 }}{{ end }}"
 checksum:
   name_template: 'checksums.txt'
 snapshot:
@@ -29,6 +32,7 @@ changelog:
 nfpms:
   - id: default
     package_name: sshmux
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}{{ if and (eq .Arch \"amd64\") (ne .Amd64 \"v1\") }}{{ .Amd64 }}{{ end }}"
     homepage: https://github.com/USTC-vlab/sshmux
     maintainer: "USTC Vlab Team <vlab@ustc.edu.cn>"
     description: |-
