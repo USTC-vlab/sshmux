@@ -309,6 +309,8 @@ func initEnv(t *testing.T) {
 }
 
 func onetimeSSHDServer(t *testing.T) *exec.Cmd {
+	t.Helper()
+
 	sshdPath, err := exec.LookPath("sshd")
 	if err != nil {
 		t.Fatal(err)
@@ -317,8 +319,17 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 	if err != nil {
 		t.Fatal(err)
 	}
+	listener, err := net.ListenTCP("tcp", localhostTCPAddr(0))
+	if err != nil {
+		t.Fatal("allocate sshd port: ", err)
+	}
+	sshdServerAddr.Port = listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal("release sshd port: ", err)
+	}
+
 	cmd := exec.Command(
-		sshdPath, "-d",
+		sshdPath, "-D", "-e",
 		"-h", filepath.Join(cwd, "fixtures/ssh_host_ed25519_key"),
 		"-p", fmt.Sprint(sshdServerAddr.Port),
 		"-o", "AuthorizedKeysFile="+filepath.Join(cwd, "fixtures/ssh_id_rsa.pub"),
@@ -328,15 +339,32 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 	if err := cmd.Start(); err != nil {
 		t.Fatal("sshd: ", err)
 	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", sshdServerAddr.String(), 50*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			break
+		}
+		if cmd.ProcessState != nil || time.Now().After(deadline) {
+			cmd.Process.Kill()
+			cmd.Wait()
+			t.Fatalf("sshd did not become ready on %s: %v", sshdServerAddr, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	return cmd
 }
 
-func waitForSSHD(t *testing.T, cmd *exec.Cmd) {
+func stopSSHD(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	if err := cmd.Process.Kill(); err != nil && !strings.Contains(err.Error(), "process already finished") {
+		t.Error("stop sshd: ", err)
+	}
 	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 255 {
-			// pass
-		} else {
-			t.Fatal("sshd: ", err)
+		if _, ok := err.(*exec.ExitError); !ok {
+			t.Error("wait for sshd: ", err)
 		}
 	}
 }
@@ -344,7 +372,7 @@ func waitForSSHD(t *testing.T, cmd *exec.Cmd) {
 func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
 	enableProxy = proxy
 	cmd := onetimeSSHDServer(t)
-	time.Sleep(100 * time.Millisecond)
+	defer stopSSHD(t, cmd)
 	sshCommand := exec.Command(
 		"ssh", "-p", fmt.Sprint(address.Port),
 		"-o", "StrictHostKeyChecking=no",
@@ -356,7 +384,6 @@ func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, p
 	if err := sshCommand.Run(); err != nil {
 		t.Fatal(fmt.Sprintf("%s: ", description), err)
 	}
-	waitForSSHD(t, cmd)
 }
 
 func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
@@ -378,7 +405,7 @@ func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, descri
 
 	enableProxy = proxy
 	cmd := onetimeSSHDServer(t)
-	time.Sleep(100 * time.Millisecond)
+	defer stopSSHD(t, cmd)
 
 	currentUser, err := user.Current()
 	if err != nil {
@@ -411,7 +438,6 @@ func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, descri
 	session.Close()
 	client.Close()
 
-	waitForSSHD(t, cmd)
 }
 
 func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
@@ -433,7 +459,7 @@ func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, desc
 	enablePartialAuth = true
 	defer func() { enablePartialAuth = false }()
 	cmd := onetimeSSHDServer(t)
-	time.Sleep(100 * time.Millisecond)
+	defer stopSSHD(t, cmd)
 
 	privateKey, err := os.ReadFile("fixtures/ssh_id_rsa")
 	if err != nil {
@@ -479,7 +505,6 @@ func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, desc
 	session.Close()
 	client.Close()
 
-	waitForSSHD(t, cmd)
 }
 
 func TestSSHClientConnection(t *testing.T) {
