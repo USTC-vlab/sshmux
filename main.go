@@ -10,25 +10,32 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-func sshmuxServer(configFile string) (*Server, error) {
+func loadConfig(configFile string) (Config, error) {
 	var config Config
 	configFileBytes, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, err
+		return config, err
 	}
 	if strings.HasSuffix(configFile, ".toml") {
 		err = toml.Unmarshal(configFileBytes, &config)
 		if err != nil {
-			return nil, err
+			return config, err
 		}
-	} else {
-		log.Println("warning: The `config.json` API is deprecated. Please use `config.toml` instead.")
-		var legacyConfig LegacyConfig
-		err = json.Unmarshal(configFileBytes, &legacyConfig)
-		if err != nil {
-			return nil, err
-		}
-		config = convertLegacyConfig(legacyConfig)
+		return config, nil
+	}
+	log.Println("warning: The `config.json` API is deprecated. Please use `config.toml` instead.")
+	var legacyConfig LegacyConfig
+	err = json.Unmarshal(configFileBytes, &legacyConfig)
+	if err != nil {
+		return config, err
+	}
+	return convertLegacyConfig(legacyConfig), nil
+}
+
+func sshmuxServer(configFile string) (*Server, error) {
+	config, err := loadConfig(configFile)
+	if err != nil {
+		return nil, err
 	}
 	return makeServer(config)
 }

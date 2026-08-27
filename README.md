@@ -4,7 +4,7 @@
 
 ## Build, Run and Test
 
-`sshmux` requires a Go 1.21+ toolchain to build. You can use `go build` or `make` to get the `sshmux` binary directly in the directory.
+`sshmux` requires a Go 1.25+ toolchain to build. You can use `go build` or `make` to get the `sshmux` binary directly in the directory.
 
 You can run the built binary with `./sshmux`. Note that you'll need to provide a valid configuration file as described [here](#config).
 
@@ -77,6 +77,63 @@ Logger settings configures the logger behavior of `sshmux`. They are grouped und
 | `enabled`  | `bool`   | Whether the logger is enabled. Defaults to `false`.                           | No                            | `true`                   |
 | `endpoint` | `string` | Endpoint URL that `sshmux` will log onto. Only `udp` scheme is supported now. | If `logger.enabled` is `true` | `"udp://127.0.0.1:5556"` |
 
+### Metrics Settings
+
+Metrics settings configure the [OpenTelemetry](https://opentelemetry.io) metrics of `sshmux`, which are described under [Metrics](#metrics). They are grouped under `metrics` in the TOML file. At least one of `metrics.otlp` and `metrics.prometheus` must be enabled when `metrics.enabled` is `true`.
+
+| Key                | Type          | Description                                                                                                   | Required | Example                              |
+| ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------ |
+| `enabled`          | `bool`        | Whether metrics collection is enabled. Defaults to `false`.                                                   | No       | `true`                               |
+| `service-name`     | `string`      | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                                       | No       | `"sshmux-vlab"`                      |
+| `attributes`       | `[]Attribute` | Extra resource attributes attached to every metric, e.g. to tag the deployment environment.                   | No       | `[{ name = "env", value = "prod" }]` |
+| `interval-seconds` | `uint`        | Interval at which metrics are pushed to the OTLP endpoint. Defaults to 60 seconds.                            | No       | `60`                                 |
+| `connection-grouping` | `bool`     | Whether the connection metrics carry the `username` and `upstream.address` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false`   |
+
+`Attribute` is a table with a `name` and a `value`, both `string`s.
+
+Settings left out of the TOML file fall back to the standard OpenTelemetry environment variables, and then to the default, giving a precedence of **configuration file > environment > default**. This applies per setting, so configuring one key does not stop the environment from supplying another. Here, `service-name` and `attributes` fall back to `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`, and `interval-seconds` to `OTEL_METRIC_EXPORT_INTERVAL`.
+
+`OTEL_SDK_DISABLED` and `OTEL_METRICS_EXPORTER` are **not** used: `metrics.enabled` and the two `enabled` keys under it are the only switches that decide what runs.
+
+#### OTLP Settings
+
+OTLP settings configure the OTLP push exporter. They are grouped under `metrics.otlp` in the TOML file.
+
+| Key               | Type           | Description                                                                                                                  | Required                      | Example                     |
+| ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------- |
+| `enabled`         | `bool`         | Whether the OTLP exporter is enabled. Defaults to `false`.                                                                   | No                            | `true`                      |
+| `protocol`        | `string`       | OTLP transport to use, either `"http"` or `"grpc"`. Defaults to `"http"`.                                                    | No                            | `"grpc"`                    |
+| `endpoint`        | `string`       | Endpoint URL of the OTLP collector. Defaults to `https://localhost:4318/v1/metrics` for `http`, and `https://localhost:4317` for `grpc` | No                 | `"http://127.0.0.1:4318/v1/metrics"` |
+| `headers`         | `[]HTTPHeader` | Extra headers (gRPC metadata for `grpc`) to send to the collector, e.g. for authentication.                                  | No                            | See [`etc/config.example.toml`](etc/config.example.toml) |
+| `timeout-seconds` | `uint`         | Timeout for a single export request. Defaults to 10 seconds.                                                                 | No                            | `10`                        |
+
+`"http/protobuf"` is accepted as a synonym for `"http"`, since that is the spelling the OpenTelemetry specification uses for `OTEL_EXPORTER_OTLP_PROTOCOL`. The specification's third value, `"http/json"`, is not supported.
+
+For `http`, `endpoint` is a signal-specific endpoint and is used exactly as written, like `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`; only the generic `OTEL_EXPORTER_OTLP_ENDPOINT` is a base URL that `/v1/metrics` is appended to. Spell the path out: `"http://127.0.0.1:4318"` posts to the collector's root, and a gateway documented as `"https://otlp.example.com/otlp"` has to be configured as `"https://otlp.example.com/otlp/v1/metrics"`.
+
+A `grpc` `endpoint` must not carry a path.
+
+Each key above may be left out and supplied by an environment variable instead:
+
+| Key               | Environment variable                                                 |
+| ----------------- | -------------------------------------------------------------------- |
+| `protocol`        | `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`, `OTEL_EXPORTER_OTLP_PROTOCOL` |
+| `endpoint`        | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `headers`         | `OTEL_EXPORTER_OTLP_METRICS_HEADERS`, `OTEL_EXPORTER_OTLP_HEADERS`   |
+| `timeout-seconds` | `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT`, `OTEL_EXPORTER_OTLP_TIMEOUT`   |
+
+Where two are listed, the signal-specific one takes precedence. The exporters read further variables that have no equivalent in the TOML file, such as `OTEL_EXPORTER_OTLP_COMPRESSION`, `OTEL_EXPORTER_OTLP_INSECURE` and the `OTEL_EXPORTER_OTLP_CERTIFICATE` family; those are always honoured.
+
+#### Prometheus Settings
+
+Prometheus settings configure the Prometheus scrape endpoint. They are grouped under `metrics.prometheus` in the TOML file.
+
+| Key       | Type     | Description                                                              | Required | Example              |
+| --------- | -------- | ------------------------------------------------------------------------ | -------- | -------------------- |
+| `enabled` | `bool`   | Whether the Prometheus endpoint is enabled. Defaults to `false`.         | No       | `true`               |
+| `address` | `string` | TCP host and port to serve metrics on. Defaults to `"127.0.0.1:9100"`.   | No       | `"127.0.0.1:9100"`   |
+| `path`    | `string` | HTTP path to serve metrics on. Defaults to `"/metrics"`.                 | No       | `"/metrics"`         |
+
 ### PROXY Protocol Settings
 
 PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) support in `sshmux`. They are grouped under `proxy-protocol` in the TOML file.
@@ -86,6 +143,49 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | `enabled`  | `bool`     | Whether PROXY protocol support is enabled. Defaults to `false`. | No       | `true`                          |
 | `hosts`    | `[]string` | Host names from which PROXY protocol is allowed.                | No       | `["nginx.local", "127.0.0.22"]` |
 | `networks` | `[]string` | Network CIDRs from which PROXY protocol is allowed.             | No       | `["10.10.0.0/24"]`              |
+
+## Metrics
+
+`sshmux` reports its own behaviour as [OpenTelemetry](https://opentelemetry.io) metrics, which are turned on and pointed at a collector through the [Metrics Settings](#metrics-settings).
+
+### Exported Metrics
+
+The metric names below are the OpenTelemetry ones. The Prometheus endpoint renders them with `.` replaced by `_`, a `_total` suffix on counters and the unit appended to durations, e.g. `sshmux.session.duration` is exposed as `sshmux_session_duration_seconds`.
+
+| Name                         | Type            | Unit           | Attributes                                     | Description                                                       |
+| ---------------------------- | --------------- | -------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
+| `sshmux.connections`         | Counter         | `{connection}` | —                                              | Connections accepted by `sshmux`.                                 |
+| `sshmux.connections.active`  | UpDownCounter   | `{connection}` | —                                              | Connections currently being served.                               |
+| `sshmux.sessions`            | Counter         | `{session}`    | `result`, `error.type`, `username`, `upstream.address` | Finished SSH proxy sessions.                              |
+| `sshmux.session.duration`    | Histogram       | `s`            | `result`, `error.type`, `username`, `upstream.address` | Session lifetime, from accept to close.                   |
+| `sshmux.handshake.duration`  | Histogram       | `s`            | `result`, `error.type`, `username`, `upstream.address` | Downstream handshake and authentication latency.          |
+| `sshmux.auth.requests`       | Counter         | `{request}`    | `result`, `error.type`, `auth.method`, `auth.status` | Requests sent to the auth API.                              |
+| `sshmux.auth.duration`       | Histogram       | `s`            | `result`, `error.type`, `auth.method`, `auth.status` | Auth API request latency.                                   |
+| `sshmux.upstream.connections`| Counter         | `{connection}` | `result`, `error.type`                         | Connection attempts to upstream SSH servers.                      |
+
+`result` is either `success` or `failure`. On failure, `error.type` classifies the error as one of `eof`, `timeout`, `canceled`, `closed` or `other`. These sets are deliberately closed, so that a misbehaving client cannot blow up the time series cardinality.
+
+For `sshmux.sessions` and `sshmux.session.duration`, `result` reports whether the session was *established*: an SSH client ends a healthy session by disconnecting, so how a session terminated once it was up is not counted against it. Use `sshmux.handshake.duration` to tell apart where an unestablished session failed.
+
+### Connection Grouping
+
+`sshmux.sessions`, `sshmux.session.duration` and `sshmux.handshake.duration` are grouped by two dimensions:
+
+| Attribute          | Description                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `username`         | Username the client authenticated as.                                                |
+| `upstream.address` | Backend as `host:port`, as returned by the auth API and before any PROXY protocol override. |
+
+Either is recorded as `unknown` when it is not yet known, which is the case for a connection that failed before its first auth request or before the auth API answered.
+
+`sshmux.connections` and `sshmux.connections.active` are recorded when a connection is accepted, before either dimension is known, so they carry no grouping.
+
+Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving one series per outcome.
+
+> [!IMPORTANT]
+> **Turn the grouping off once your user base approaches 2000.** Since users normally map one-to-one onto backends, the two dimensions together produce roughly one time series per user, and that count only ever grows, because the metrics are cumulative. The OpenTelemetry SDK caps each instrument at 2000 series by default: past the cap, measurements do not stop being recorded, but they collapse into a single series marked `otel.metric.overflow="true"`, and which users kept a series of their own comes down to whoever connected first after startup. Grouped metrics are therefore only meaningful below the cap.
+>
+> The `OTEL_GO_X_CARDINALITY_LIMIT` environment variable raises the cap if you would rather keep the grouping, at the cost of memory that grows with your user count. There is no TOML equivalent, because raising it is rarely the right answer.
 
 ## Auth API
 

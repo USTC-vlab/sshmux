@@ -25,6 +25,29 @@ invalid-username-message = "Invalid username %s. Please check https://vlab.ustc.
 enabled = true
 endpoint = "udp://127.0.0.1:5556"
 
+[metrics]
+enabled = true
+service-name = "sshmux"
+interval-seconds = 60
+attributes = [
+    { name = "deployment.environment.name", value = "production" },
+]
+connection-grouping = false
+
+[metrics.otlp]
+enabled = true
+protocol = "http"
+endpoint = "http://127.0.0.1:4318/v1/metrics"
+timeout-seconds = 10
+headers = [
+    { name = "Authorization", value = "ApiKey 12345678" },
+]
+
+[metrics.prometheus]
+enabled = true
+address = "127.0.0.1:9100"
+path = "/metrics"
+
 [proxy-protocol]
 enabled = true
 hosts = ["127.0.0.22"]
