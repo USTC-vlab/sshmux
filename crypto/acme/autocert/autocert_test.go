@@ -201,7 +201,7 @@ func TestGetCertificate(t *testing.T) {
 			prepare: func(t *testing.T, man *Manager, s *acmetest.CAServer) {
 				man.Prompt = nil
 			},
-			expectError: "Manager.Prompt not set",
+			expectError: "missing Manager.Prompt",
 		},
 		{
 			name:   "trailingDot",
@@ -511,6 +511,33 @@ func TestGetCertificate_failedAttempt(t *testing.T) {
 	if v, exist := man.state[exampleCertKey]; exist {
 		t.Errorf("state exists for %v: %+v", exampleCertKey, v)
 	}
+}
+
+// TestGetCertificate_concurrent guards against a data race on certState
+// fields between the goroutine performing the ACME work for a domain and
+// the other goroutines waiting on the result. See golang/go#80119.
+func TestGetCertificate_concurrent(t *testing.T) {
+	// An unreachable directory URL makes the owner goroutine fail
+	// quickly inside createCert, so its writes overlap with the
+	// non-owner goroutines reaching the same code path.
+	m := &Manager{
+		Prompt: AcceptTOS,
+		Client: &acme.Client{DirectoryURL: "http://127.0.0.1:1/"},
+	}
+	defer m.stopRenew()
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			m.GetCertificate(clientHelloInfo(exampleDomain, algECDSA))
+		}()
+	}
+	close(start)
+	wg.Wait()
 }
 
 func TestRevokeFailedAuthz(t *testing.T) {

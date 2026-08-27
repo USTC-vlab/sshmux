@@ -53,6 +53,9 @@ func (c *Client) registerRFC(ctx context.Context, acct *Account, prompt func(tos
 		Contact: acct.Contact,
 	}
 	if c.dir.Terms != "" {
+		if prompt == nil {
+			return nil, errors.New("acme: missing Manager.Prompt to accept server's terms of service")
+		}
 		req.TermsAgreed = prompt(c.dir.Terms)
 	}
 
@@ -232,7 +235,7 @@ func (c *Client) AuthorizeOrder(ctx context.Context, id []AuthzID, opt ...OrderO
 	return responseOrder(res)
 }
 
-// GetOrder retrives an order identified by the given URL.
+// GetOrder retrieves an order identified by the given URL.
 // For orders created with AuthorizeOrder, the url value is Order.URI.
 //
 // If a caller needs to poll an order until its status is final,
