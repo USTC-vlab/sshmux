@@ -13,9 +13,12 @@ import (
 )
 
 type AuthRequest struct {
-	Method    string            `json:"method"`
-	PublicKey string            `json:"public_key,omitempty"`
-	Payload   map[string]string `json:"payload"`
+	ClientAddress string            `json:"client_address"`
+	ClientVersion string            `json:"client_version"`
+	SessionID     string            `json:"session_id"`
+	Method        string            `json:"method"`
+	PublicKey     string            `json:"public_key,omitempty"`
+	Payload       map[string]string `json:"payload"`
 }
 
 type AuthResponse struct {

@@ -98,6 +98,9 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | Key               | Type                  | Description                                                                                    | Position | Required |
 | ----------------- | --------------------- | ---------------------------------------------------------------------------------------------- | -------- | -------- |
 | `username`        | `string`              | SSH user name. Usually the one for logging into the target server.                             | Path     | Yes      |
+| `client_address`  | `string`              | Address of the SSH client as `host:port`. Reflects the original client under PROXY protocol.   | Body     | Yes      |
+| `client_version`  | `string`              | SSH client identification string, e.g. `"SSH-2.0-OpenSSH_9.9"`.                                | Body     | Yes      |
+| `session_id`      | `string`              | Base64-encoded SSH session ID, unique per connection and stable across its auth requests.      | Body     | Yes      |
 | `method`          | `string`              | SSH authentication method. Usually one of `"none"`, `"publickey"` or `"keyboard-interactive"`. | Body     | Yes      |
 | `public_key`      | `string`              | User public key, serialized in OpenSSH format.                                                 | Body     | No       |
 | `payload`         | `Map<string, string>` | Authentication payload constructed from interactive input.                                     | Body     | No       |

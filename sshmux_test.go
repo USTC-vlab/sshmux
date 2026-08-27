@@ -36,6 +36,27 @@ func localhostTCPAddr(port int) *net.TCPAddr {
 var enableProxy bool
 var inited bool
 
+// checkClientInfo validates the client information sshmux reports on an auth
+// request, and describes the first problem found, if any.
+func checkClientInfo(request AuthRequest) string {
+	host, port, err := net.SplitHostPort(request.ClientAddress)
+	if err != nil {
+		return fmt.Sprintf("malformed client address %q", request.ClientAddress)
+	}
+	// every test client connects from localhost, including the ones whose
+	// address only survives in the PROXY header
+	if host != "127.0.0.1" || port == "0" {
+		return fmt.Sprintf("unexpected client address %q", request.ClientAddress)
+	}
+	if !strings.HasPrefix(request.ClientVersion, "SSH-2.0-") {
+		return fmt.Sprintf("unexpected client version %q", request.ClientVersion)
+	}
+	if request.SessionID == "" {
+		return "missing session ID"
+	}
+	return ""
+}
+
 func initHttp(sshPrivateKey []byte) {
 	sshAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		body, err := io.ReadAll(r.Body)
@@ -76,9 +97,24 @@ func initHttp(sshPrivateKey []byte) {
 			http.Error(w, "Cannot read body", http.StatusBadRequest)
 			return
 		}
-		var dat map[string]interface{}
-		if err := json.Unmarshal(body, &dat); err != nil {
-			http.Error(w, "Not JSON", http.StatusBadRequest)
+		var req AuthRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "Not an auth request", http.StatusBadRequest)
+			return
+		}
+		if problem := checkClientInfo(req); problem != "" {
+			// the message reaches the SSH client, but log it as well to explain
+			// the connection failure the test will report
+			log.Printf("auth API: %s", problem)
+			failure := AuthFailure{Message: problem, Disconnect: true}
+			jsonRes, err := json.Marshal(AuthResponse{Failure: &failure})
+			if err != nil {
+				http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write(jsonRes)
 			return
 		}
 
