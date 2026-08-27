@@ -657,7 +657,7 @@ func TestServerMetricsUpstreamGrouping(t *testing.T) {
 	defer sshmux.Shutdown()
 
 	sshd := onetimeSSHDServer(t)
-	time.Sleep(100 * time.Millisecond)
+	defer stopSSHD(t, sshd)
 	address := sshmux.Addr().(*net.TCPAddr)
 	sshCommand := exec.Command(
 		"ssh", "-p", fmt.Sprint(address.Port),
@@ -670,7 +670,6 @@ func TestServerMetricsUpstreamGrouping(t *testing.T) {
 	if err := sshCommand.Run(); err != nil {
 		t.Fatal("ssh: ", err)
 	}
-	waitForSSHD(t, sshd)
 
 	// The session is recorded once its handler winds down, shortly after the
 	// client exits.
