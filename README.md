@@ -102,15 +102,29 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | `client_version`  | `string`              | SSH client identification string, e.g. `"SSH-2.0-OpenSSH_9.9"`.                                | Body     | Yes      |
 | `session_id`      | `string`              | Base64-encoded SSH session ID, unique per connection and stable across its auth requests.      | Body     | Yes      |
 | `method`          | `string`              | SSH authentication method. Usually one of `"none"`, `"publickey"` or `"keyboard-interactive"`. | Body     | Yes      |
-| `public_key`      | `string`              | User public key, serialized in OpenSSH format.                                                 | Body     | No       |
+| `public_key`      | `string`              | User public key, serialized in OpenSSH format. Kept on later requests once accepted.           | Body     | No       |
 | `payload`         | `Map<string, string>` | Authentication payload constructed from interactive input.                                     | Body     | No       |
 
 #### Output: `200 OK`
 
-| Key              | Type                    | Description                   | Required |
-| ---------------- | ----------------------- | ----------------------------- | -------- |
-| `upstream`       | [`Upstream`](#upstream) | SSH upstream information.     | Yes      |
-| `proxy`          | [`Proxy`](#proxy)       | PROXY protocol configuration. | No       |
+| Key              | Type                        | Description                                                                           | Required |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------------- | -------- |
+| `upstream`       | [`Upstream`](#upstream)     | SSH upstream information.                                                             | Yes, unless `challenges` is set |
+| `challenges`     | [`[]Challenge`](#challenge) | Challenges for extra inputs from user. Only applicable to `publickey` authentication. | No       |
+| `proxy`          | [`Proxy`](#proxy)           | PROXY protocol configuration.                                                         | No       |
+
+Returning `challenges` instead of `upstream` partially accepts the `publickey`
+authentication: `sshmux` reports partial success to the user and sends them to
+`keyboard-interactive`, the only method that can answer the challenges. Every
+other authentication request is rejected until such a request arrives, at which
+point the challenges are presented and their answers are sent back as `payload`
+of a new `keyboard-interactive` request, carrying over the accepted `public_key`.
+Further rounds of challenges are then requested with
+[`401 Not Authorized`](#output-401-not-authorized) as usual.
+
+Returning `200 OK` with neither `upstream` nor `challenges`, or returning
+`challenges` for an authentication method other than `publickey`, is an error
+and disconnects the user.
 
 ##### `Upstream`
 
@@ -135,6 +149,10 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | Key          | Type                        | Description                                                                                      | Required |
 | ------------ | --------------------------- | ------------------------------------------------------------------------------------------------ | -------- |
 | `challenges` | [`[]Challenge`](#challenge) | Challenges for extra inputs from user. Only applicable to `keyboard-interactive` authentication. | Yes      |
+
+Returning `401 Not Authorized` no `challenges`, or returning `challenges` for an
+authentication method other than `keyboard-interactive`, is an error and
+disconnects the user.
 
 ##### `Challenge`
 

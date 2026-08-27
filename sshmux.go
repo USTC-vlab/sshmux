@@ -195,6 +195,33 @@ func (s *Server) handler(conn net.Conn) {
 	}
 }
 
+// answerChallenges prompts the downstream user with the given challenges over
+// keyboard-interactive, and stores the collected answers into req's payload.
+func answerChallenges(session *ssh.PipeSession, req *AuthRequest, challenges []AuthChallenge) error {
+	for _, challenge := range challenges {
+		questions := make([]string, 0, len(challenge.Fields))
+		withEcho := make([]bool, 0, len(challenge.Fields))
+		for _, field := range challenge.Fields {
+			questions = append(questions, field.Prompt)
+			withEcho = append(withEcho, !field.Secret)
+		}
+		answers, err := session.Downstream.InteractiveChallenge("", challenge.Instruction, questions, withEcho)
+		if err != nil {
+			return err
+		}
+		if len(answers) != len(questions) {
+			return errors.New("ssh: numbers of answers and questions do not match")
+		}
+		if req.Payload == nil {
+			req.Payload = make(map[string]string, len(challenge.Fields))
+		}
+		for i, answer := range answers {
+			req.Payload[challenge.Fields[i].Key] = answer
+		}
+	}
+	return nil
+}
+
 func (s *Server) Handshake(session *ssh.PipeSession) error {
 	hasSetUser := false
 	var user string
@@ -210,6 +237,9 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 	clientVersion := string(session.Downstream.ClientVersion())
 	sessionID := base64.StdEncoding.EncodeToString(session.Downstream.SessionID())
 	// Stage 1: Authenticate the user with API
+	// The public key accepted by the API server, carried over to the later auth
+	// requests, so that it can still recognize the user by it.
+	var acceptedPublicKey string
 auth_requests:
 	for {
 		authReq, err := session.Downstream.ReadAuthRequest(true)
@@ -226,6 +256,7 @@ auth_requests:
 			ClientVersion: clientVersion,
 			SessionID:     sessionID,
 			Method:        authReq.Method,
+			PublicKey:     acceptedPublicKey,
 		}
 		if authReq.Method == "publickey" && !authReq.IsPublicKeyQuery {
 			req.PublicKey = string(ssh.MarshalAuthorizedKey(*authReq.PublicKey))
@@ -237,6 +268,38 @@ auth_requests:
 			}
 			switch status {
 			case 200:
+				if resp.Upstream == nil {
+					// The API server partially accepts the publickey auth and requests
+					// challenges instead. Report the partial success and send the user
+					// to keyboard-interactive, the only method that can answer them.
+					if req.Method != "publickey" {
+						return fmt.Errorf("no upstream returned for user %s on %s auth", user, req.Method)
+					}
+					if len(resp.Challenges) == 0 {
+						return fmt.Errorf("neither upstream nor challenges returned for user %s", user)
+					}
+					acceptedPublicKey = req.PublicKey
+					err := session.Downstream.WriteAuthFailure([]string{"keyboard-interactive"}, true)
+					if err != nil {
+						return err
+					}
+					for {
+						authReq, err := session.Downstream.ReadAuthRequest(true)
+						if err != nil {
+							return err
+						}
+						if authReq.Method == "keyboard-interactive" {
+							req.Method = authReq.Method
+							break
+						}
+						session.Downstream.WriteAuthFailure([]string{"keyboard-interactive"}, false)
+					}
+					err = answerChallenges(session, &req, resp.Challenges)
+					if err != nil {
+						return err
+					}
+					continue
+				}
 				upstreamResp := *resp.Upstream
 				if upstreamResp.Port == 0 {
 					upstreamResp.Port = 22
@@ -283,26 +346,9 @@ auth_requests:
 					session.Downstream.WriteAuthFailure([]string{"publickey", "keyboard-interactive"}, false)
 					continue auth_requests
 				}
-				for _, challenge := range resp.Challenges {
-					questions := make([]string, 0, len(challenge.Fields))
-					withEcho := make([]bool, 0, len(challenge.Fields))
-					for _, field := range challenge.Fields {
-						questions = append(questions, field.Prompt)
-						withEcho = append(withEcho, !field.Secret)
-					}
-					answers, err := session.Downstream.InteractiveChallenge("", challenge.Instruction, questions, withEcho)
-					if err != nil {
-						return err
-					}
-					if len(answers) != len(questions) {
-						return errors.New("ssh: numbers of answers and questions do not match")
-					}
-					if req.Payload == nil {
-						req.Payload = make(map[string]string, len(challenge.Fields))
-					}
-					for i, answer := range answers {
-						req.Payload[challenge.Fields[i].Key] = answer
-					}
+				err := answerChallenges(session, &req, resp.Challenges)
+				if err != nil {
+					return err
 				}
 				continue
 			case 403:

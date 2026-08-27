@@ -34,7 +34,12 @@ func localhostTCPAddr(port int) *net.TCPAddr {
 }
 
 var enableProxy bool
+var enablePartialAuth bool
 var inited bool
+
+// partialAuthToken is the answer expected by the auth API when partial auth is
+// enabled, before it hands out any upstream information.
+const partialAuthToken = "testtoken"
 
 // checkClientInfo validates the client information sshmux reports on an auth
 // request, and describes the first problem found, if any.
@@ -116,6 +121,51 @@ func initHttp(sshPrivateKey []byte) {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write(jsonRes)
 			return
+		}
+
+		if enablePartialAuth {
+			deny := func(message string) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"failure":{"message":"` + message + `"}}`))
+			}
+			// The public key identifies the user, and must be carried over to the
+			// requests that follow its acceptance.
+			if req.PublicKey == "" {
+				deny("public key required")
+				return
+			}
+			switch req.Method {
+			case "publickey":
+				// Partially accept the public key, and ask for the token over
+				// keyboard-interactive.
+				res := map[string]any{
+					"challenges": []map[string]any{{
+						"instruction": "Please enter your token.",
+						"fields": []map[string]any{
+							{"key": "token", "prompt": "Token: ", "secret": true},
+						},
+					}},
+				}
+				jsonRes, err := json.Marshal(res)
+				if err != nil {
+					http.Error(w, "Cannot encode JSON", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(jsonRes)
+				return
+			case "keyboard-interactive":
+				// The challenges are answered on the follow-up request, which the
+				// partial success has sent the user to.
+				if req.Payload["token"] != partialAuthToken {
+					deny("invalid token")
+					return
+				}
+			default:
+				deny("unsupported auth method")
+				return
+			}
 		}
 
 		res := map[string]any{
@@ -364,6 +414,74 @@ func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, descri
 	waitForSSHD(t, cmd)
 }
 
+func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+	challenged := false
+	challenge := func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+		challenged = true
+		answers = make([]string, len(questions))
+		for i, q := range questions {
+			if strings.Contains(q, "Token") {
+				answers[i] = partialAuthToken
+			} else {
+				t.Fatalf("Unexpected question: %s", q)
+			}
+		}
+		return answers, nil
+	}
+
+	enableProxy = proxy
+	enablePartialAuth = true
+	defer func() { enablePartialAuth = false }()
+	cmd := onetimeSSHDServer(t)
+	time.Sleep(100 * time.Millisecond)
+
+	privateKey, err := os.ReadFile("fixtures/ssh_id_rsa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.ParsePrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatalf("failed to get current user: %v", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: currentUser.Username,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+			ssh.KeyboardInteractive(challenge),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+
+	client, err := ssh.Dial("tcp", address.String(), config)
+	if err != nil {
+		t.Fatal(fmt.Sprintf("%s: failed to dial: ", description), err)
+	}
+
+	if !challenged {
+		t.Fatalf("%s: expected a keyboard-interactive challenge after partial success", description)
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(fmt.Sprintf("%s: failed to create session: ", description), err)
+	}
+
+	if err := session.Run("uname"); err != nil {
+		t.Fatal(fmt.Sprintf("%s: failed to run command: ", description), err)
+	}
+
+	session.Close()
+	client.Close()
+
+	waitForSSHD(t, cmd)
+}
+
 func TestSSHClientConnection(t *testing.T) {
 	initEnv(t)
 	configFiles := []string{"config.toml", "legacy.toml", "config.json"}
@@ -427,4 +545,31 @@ func TestLegacySSHChallengeClientConnection(t *testing.T) {
 		// test sshmux with two-way proxy
 		testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
 	}
+}
+
+func TestSSHPartialAuthChallengeClientConnection(t *testing.T) {
+	initEnv(t)
+
+	// start sshmux server
+	sshmux, err := sshmuxServer(filepath.Join("fixtures", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sshmux.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sshmux.Shutdown()
+
+	// test sshmux
+	testWithGolangSSHPartialAuthClient(t, sshmuxServerAddr, "sshmux", false)
+
+	// test sshmux with upstream proxy
+	testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false)
+
+	// test sshmux with downstream proxy
+	testWithGolangSSHPartialAuthClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true)
+
+	// test sshmux with two-way proxy
+	testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
 }
