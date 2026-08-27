@@ -205,6 +205,10 @@ func (s *Server) Handshake(session *ssh.PipeSession) error {
 			return err
 		}
 	}
+	// Basic information about the downstream client, constant for the connection
+	clientAddress := session.Downstream.RemoteAddr().String()
+	clientVersion := string(session.Downstream.ClientVersion())
+	sessionID := base64.StdEncoding.EncodeToString(session.Downstream.SessionID())
 	// Stage 1: Authenticate the user with API
 auth_requests:
 	for {
@@ -217,7 +221,12 @@ auth_requests:
 			session.Downstream.SetUser(user)
 			hasSetUser = true
 		}
-		req := AuthRequest{Method: authReq.Method}
+		req := AuthRequest{
+			ClientAddress: clientAddress,
+			ClientVersion: clientVersion,
+			SessionID:     sessionID,
+			Method:        authReq.Method,
+		}
 		if authReq.Method == "publickey" && !authReq.IsPublicKeyQuery {
 			req.PublicKey = string(ssh.MarshalAuthorizedKey(*authReq.PublicKey))
 		}
