@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,36 @@ var (
 	// a PROXY protocol server in front of sshd, for proxied upstreams
 	sshdProxiedAddr *net.TCPAddr
 )
+
+// proxySourceIP is the address the PROXY protocol server in front of sshmux
+// connects from. The fixtures name it as the one host sshmux accepts PROXY
+// headers from, and it has to differ from the client's own 127.0.0.1 for the
+// tests to tell a header sshmux honoured from one it ignored.
+var proxySourceIP = net.IPv4(127, 0, 0, 22)
+
+// Linux routes the whole of 127.0.0.0/8 to the loopback interface. macOS
+// configures 127.0.0.1 alone and rejects the rest with EADDRNOTAVAIL unless an
+// alias has been added by hand, so that is the one place worth asking.
+var proxySourceAvailable = runtime.GOOS != "darwin" || canBindProxySource()
+
+func canBindProxySource() bool {
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: proxySourceIP})
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
+}
+
+// requireProxySource skips a test that reaches sshmux through the PROXY
+// protocol server, on a machine where that server cannot have an address of
+// its own.
+func requireProxySource(t *testing.T) {
+	t.Helper()
+	if !proxySourceAvailable {
+		t.Skipf("%s is not a local address (macOS: sudo ifconfig lo0 alias %s up)", proxySourceIP, proxySourceIP)
+	}
+}
 
 // listenLocalhost binds a loopback port chosen by the kernel. Callers read the
 // address it landed on back off the listener.
@@ -221,7 +252,7 @@ func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 func serveUpstreamProxy(listener net.Listener) {
 	defer listener.Close()
 
-	localAddr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 22)}
+	localAddr := &net.TCPAddr{IP: proxySourceIP}
 
 	for {
 		conn, err := listener.Accept()
@@ -422,7 +453,7 @@ func stopSSHD(t *testing.T, cmd *exec.Cmd) {
 }
 
 // runSSHClient runs a command over the system ssh client against address.
-func runSSHClient(t *testing.T, address *net.TCPAddr, description string) {
+func runSSHClient(t *testing.T, address *net.TCPAddr) {
 	t.Helper()
 	sshCommand := exec.Command(
 		"ssh", "-p", fmt.Sprint(address.Port),
@@ -433,7 +464,7 @@ func runSSHClient(t *testing.T, address *net.TCPAddr, description string) {
 		address.IP.String(), "uname")
 	sshCommand.Dir, _ = os.Getwd()
 	if err := sshCommand.Run(); err != nil {
-		t.Fatal(fmt.Sprintf("%s: ", description), err)
+		t.Fatal("ssh: ", err)
 	}
 }
 
@@ -444,18 +475,18 @@ func sanityCheckSSHD(t *testing.T) {
 	enableProxy = false
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
-	runSSHClient(t, sshdServerAddr, "sanity check")
+	runSSHClient(t, sshdServerAddr)
 }
 
-func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+func testWithSSHClient(t *testing.T, address *net.TCPAddr, proxy bool) {
 	t.Helper()
 	enableProxy = proxy
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
-	runSSHClient(t, address, description)
+	runSSHClient(t, address)
 }
 
-func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, proxy bool) {
 	challenge := func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
 		answers = make([]string, len(questions))
 		for i, q := range questions {
@@ -492,16 +523,16 @@ func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, descri
 
 	client, err := ssh.Dial("tcp", address.String(), config)
 	if err != nil {
-		t.Fatal(fmt.Sprintf("%s: failed to dial: ", description), err)
+		t.Fatal("failed to dial: ", err)
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
-		t.Fatal(fmt.Sprintf("%s: failed to create session: ", description), err)
+		t.Fatal("failed to create session: ", err)
 	}
 
 	if err := session.Run("uname"); err != nil {
-		t.Fatal(fmt.Sprintf("%s: failed to run command: ", description), err)
+		t.Fatal("failed to run command: ", err)
 	}
 
 	session.Close()
@@ -509,7 +540,7 @@ func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, descri
 
 }
 
-func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, proxy bool) {
 	challenged := false
 	challenge := func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
 		challenged = true
@@ -555,20 +586,20 @@ func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, desc
 
 	client, err := ssh.Dial("tcp", address.String(), config)
 	if err != nil {
-		t.Fatal(fmt.Sprintf("%s: failed to dial: ", description), err)
+		t.Fatal("failed to dial: ", err)
 	}
 
 	if !challenged {
-		t.Fatalf("%s: expected a keyboard-interactive challenge after partial success", description)
+		t.Fatal("expected a keyboard-interactive challenge after partial success")
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
-		t.Fatal(fmt.Sprintf("%s: failed to create session: ", description), err)
+		t.Fatal("failed to create session: ", err)
 	}
 
 	if err := session.Run("uname"); err != nil {
-		t.Fatal(fmt.Sprintf("%s: failed to run command: ", description), err)
+		t.Fatal("failed to run command: ", err)
 	}
 
 	session.Close()
@@ -581,23 +612,28 @@ func TestSSHClientConnection(t *testing.T) {
 	configFiles := []string{"config.toml", "legacy.toml", "config.json"}
 
 	for _, configFile := range configFiles {
-		// start sshmux server
-		sshmux := startServer(t, configFile)
-		defer sshmux.Shutdown()
+		t.Run(configFile, func(t *testing.T) {
+			sshmux := startServer(t, configFile)
+			defer sshmux.Shutdown()
 
-		sanityCheckSSHD(t)
-
-		// test sshmux
-		testWithSSHClient(t, sshmuxServerAddr, "sshmux", false)
-
-		// test sshmux with upstream proxy
-		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false)
-
-		// test sshmux with downstream proxy
-		testWithSSHClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true)
-
-		// test sshmux with two-way proxy
-		testWithSSHClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
+			t.Run("sshd", func(t *testing.T) {
+				sanityCheckSSHD(t)
+			})
+			t.Run("sshmux", func(t *testing.T) {
+				testWithSSHClient(t, sshmuxServerAddr, false)
+			})
+			t.Run("proxied src", func(t *testing.T) {
+				requireProxySource(t)
+				testWithSSHClient(t, sshmuxProxyAddr, false)
+			})
+			t.Run("proxied dst", func(t *testing.T) {
+				testWithSSHClient(t, sshmuxServerAddr, true)
+			})
+			t.Run("proxied both ways", func(t *testing.T) {
+				requireProxySource(t)
+				testWithSSHClient(t, sshmuxProxyAddr, true)
+			})
+		})
 	}
 }
 
@@ -605,43 +641,49 @@ func TestLegacySSHChallengeClientConnection(t *testing.T) {
 	initEnv(t)
 	configFiles := []string{"legacy.toml", "config.json"}
 
+	// there is no sanity check here: the default ssh server does not support
+	// challenge-response authentication
 	for _, configFile := range configFiles {
-		// start sshmux server
-		sshmux := startServer(t, configFile)
-		defer sshmux.Shutdown()
+		t.Run(configFile, func(t *testing.T) {
+			sshmux := startServer(t, configFile)
+			defer sshmux.Shutdown()
 
-		// we can't do sanity check here as default ssh server does not support challenge-response authentication
-
-		// test sshmux
-		testWithGolangSSHChallengeClient(t, sshmuxServerAddr, "sshmux", false)
-
-		// test sshmux with upstream proxy
-		testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false)
-
-		// test sshmux with downstream proxy
-		testWithGolangSSHChallengeClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true)
-
-		// test sshmux with two-way proxy
-		testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
+			t.Run("sshmux", func(t *testing.T) {
+				testWithGolangSSHChallengeClient(t, sshmuxServerAddr, false)
+			})
+			t.Run("proxied src", func(t *testing.T) {
+				requireProxySource(t)
+				testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, false)
+			})
+			t.Run("proxied dst", func(t *testing.T) {
+				testWithGolangSSHChallengeClient(t, sshmuxServerAddr, true)
+			})
+			t.Run("proxied both ways", func(t *testing.T) {
+				requireProxySource(t)
+				testWithGolangSSHChallengeClient(t, sshmuxProxyAddr, true)
+			})
+		})
 	}
 }
 
 func TestSSHPartialAuthChallengeClientConnection(t *testing.T) {
 	initEnv(t)
 
-	// start sshmux server
 	sshmux := startServer(t, "config.toml")
 	defer sshmux.Shutdown()
 
-	// test sshmux
-	testWithGolangSSHPartialAuthClient(t, sshmuxServerAddr, "sshmux", false)
-
-	// test sshmux with upstream proxy
-	testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, "sshmux (proxied src)", false)
-
-	// test sshmux with downstream proxy
-	testWithGolangSSHPartialAuthClient(t, sshmuxServerAddr, "sshmux (proxied dst)", true)
-
-	// test sshmux with two-way proxy
-	testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, "sshmux (proxied)", true)
+	t.Run("sshmux", func(t *testing.T) {
+		testWithGolangSSHPartialAuthClient(t, sshmuxServerAddr, false)
+	})
+	t.Run("proxied src", func(t *testing.T) {
+		requireProxySource(t)
+		testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, false)
+	})
+	t.Run("proxied dst", func(t *testing.T) {
+		testWithGolangSSHPartialAuthClient(t, sshmuxServerAddr, true)
+	})
+	t.Run("proxied both ways", func(t *testing.T) {
+		requireProxySource(t)
+		testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, true)
+	})
 }
