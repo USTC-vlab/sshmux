@@ -828,6 +828,22 @@ func collectSpans(t *testing.T) (*httptest.Server, func() []*tracev1.Span) {
 	}
 }
 
+// startTracerServer starts sshmux with the tracer fixture, pointed at a
+// collector these tests can read back.
+func startTracerServer(t *testing.T, collector *httptest.Server) *Server {
+	t.Helper()
+	return startServer(t, "tracer.toml", func(config *Config) {
+		// The fixture exercises the configuration surface, not these tests: it
+		// names a gRPC collector, samples a quarter of traces, which would make
+		// the assertions intermittent, and asks for the ECS attribute names,
+		// which spell the application protocol differently.
+		config.Tracer.OTLP.Protocol = "http"
+		config.Tracer.OTLP.Endpoint = collector.URL + "/v1/traces"
+		config.Tracer.SampleRatio = nil
+		config.Tracer.Convention = AttributeConventionDefault
+	})
+}
+
 // flushSpans exports whatever the batcher is holding, so that the spans of a
 // finished session can be inspected without shutting the server down.
 func flushSpans(t *testing.T, sshmux *Server) {
@@ -889,6 +905,15 @@ func awaitSpans(t *testing.T, sshmux *Server, spans func() []*tracev1.Span, want
 }
 
 // spanHasAttribute reports whether a span carries key.
+// spanNames reports the names of spans, for a failed assertion to show.
+func spanNames(spans []*tracev1.Span) []string {
+	names := make([]string, 0, len(spans))
+	for _, span := range spans {
+		names = append(names, span.Name)
+	}
+	return names
+}
+
 func spanHasAttribute(span *tracev1.Span, key string) bool {
 	for _, attr := range span.Attributes {
 		if attr.Key == key {
@@ -978,16 +1003,7 @@ func TestServerSpans(t *testing.T) {
 	initEnv(t)
 
 	collector, spans := collectSpans(t)
-	sshmux := startServer(t, "tracer.toml", func(config *Config) {
-		// The fixture exercises the configuration surface, not this test: it
-		// names a gRPC collector, samples a quarter of traces, which would make
-		// the assertions intermittent, and asks for the ECS attribute names,
-		// which spell the application protocol differently.
-		config.Tracer.OTLP.Protocol = "http"
-		config.Tracer.OTLP.Endpoint = collector.URL + "/v1/traces"
-		config.Tracer.SampleRatio = nil
-		config.Tracer.Convention = AttributeConventionDefault
-	})
+	sshmux := startTracerServer(t, collector)
 	defer sshmux.Shutdown()
 
 	t.Run("sshmux", func(t *testing.T) {
@@ -1016,4 +1032,43 @@ func TestSSHProtocolVersion(t *testing.T) {
 			t.Errorf("sshProtocolVersion(%q) = %q, want %q", tc.identification, got, tc.want)
 		}
 	}
+}
+
+// testFailedSessionSpan checks the span of a connection that never reached the
+// SSH transport: there is one, it is the session span, and it failed.
+func testFailedSessionSpan(t *testing.T, spans []*tracev1.Span) {
+	t.Helper()
+	if len(spans) != 1 {
+		t.Fatalf("%d spans were exported, want 1: %v", len(spans), spanNames(spans))
+	}
+	span := spans[0]
+	if span.Name != "establish ssh session" {
+		t.Errorf("the span is %q, want %q", span.Name, "establish ssh session")
+	}
+	if span.Kind != tracev1.Span_SPAN_KIND_SERVER {
+		t.Errorf("span kind = %v, want SPAN_KIND_SERVER", span.Kind)
+	}
+	if span.Status.GetCode() != tracev1.Status_STATUS_CODE_ERROR {
+		t.Errorf("span status = %v, want STATUS_CODE_ERROR", span.Status.GetCode())
+	}
+	for _, key := range []string{"client.address", "client.port", "network.peer.address"} {
+		if !spanHasAttribute(span, key) {
+			t.Errorf("the span carries no %q attribute", key)
+		}
+	}
+}
+
+// TestServerSpanWithoutSession checks that a connection dropped before the SSH
+// transport is up is still traced, rather than only counted.
+func TestServerSpanWithoutSession(t *testing.T) {
+	initEnv(t)
+
+	collector, spans := collectSpans(t)
+	sshmux := startTracerServer(t, collector)
+	defer sshmux.Shutdown()
+
+	t.Run("dropped connection", func(t *testing.T) {
+		dropConnection(t, sshmuxServerAddr)
+		testFailedSessionSpan(t, awaitSpans(t, sshmux, spans, 1))
+	})
 }

@@ -182,8 +182,6 @@ func (s *Server) handler(conn net.Conn) {
 	defer conn.Close()
 
 	connectTime := time.Now()
-	s.Metrics.ConnectionAccepted(s.ctx)
-	var sessionErr error
 	var info connectionInfo
 	if address, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
 		info.ClientHost, info.ClientPort = address.IP.String(), uint16(address.Port)
@@ -194,20 +192,31 @@ func (s *Server) handler(conn net.Conn) {
 	if proxied, ok := conn.(*proxyproto.Conn); ok {
 		info.ClientPeer = proxied.Raw().RemoteAddr()
 	}
+
+	// The span covers establishing the session, not its lifetime: a session
+	// that is up lasts as long as the client stays connected, and a span left
+	// open that long is held in memory and reaches no exporter until it ends.
+	// How long a session lived is reported by `sshmux.session.duration`.
+	ctx, span := s.Tracer.Start(s.ctx, "establish ssh session", spanKindServer)
+	s.Metrics.ConnectionAccepted(ctx)
+	var sessionErr error
 	defer func() {
-		s.Metrics.ConnectionClosed(s.ctx, info, sessionErr, time.Since(connectTime))
+		s.Metrics.ConnectionClosed(ctx, info, sessionErr, time.Since(connectTime))
 	}()
 
-	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
-		sessionErr = err
-		return
-	}
-	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
-	if err != nil {
+	session, attrs, err := s.establishSession(ctx, conn, &info)
+	endSpan(span, err, append(s.Tracer.connectionSpanAttributes(info),
+		s.Tracer.peerAttributes(info.ClientPeer)...)...)
+	// A connection that never reached the SSH transport has nothing to log
+	// about a session, and nothing to close.
+	if session == nil {
 		sessionErr = err
 		return
 	}
 	defer session.Close()
+	if err != nil && err != io.EOF {
+		log.Println("runPipeSession:", err)
+	}
 
 	logger := slog.New(slog.NewJSONHandler(s.LogWriter, nil))
 	logger = logger.With(
@@ -215,25 +224,26 @@ func (s *Server) handler(conn net.Conn) {
 		slog.String("remote_ip", conn.RemoteAddr().String()),
 		slog.String("client_type", "SSH"),
 	)
+	for _, attr := range attrs {
+		logger = logger.With(attr)
+	}
 	defer func() {
 		logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
 	}()
+
+	if err != nil {
+		// Once the session is up, the client ends it by disconnecting, so only
+		// a failure to establish one counts against the session result.
+		sessionErr = err
+		return
+	}
 
 	select {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(s.ctx, session, &info)
-		if err != nil && err != io.EOF {
+		if err := session.RunPipe(); err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
-		}
-		// Once the session is up, the client ends it by disconnecting, so only
-		// a failure to establish one counts against the session result.
-		if !info.Established {
-			sessionErr = err
-		}
-		for _, attr := range attrs {
-			logger = logger.With(attr)
 		}
 	}
 }
@@ -531,37 +541,32 @@ auth_requests:
 	}
 }
 
-func (s *Server) RunPipeSession(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
-	// The span covers establishing the session, not its lifetime: a session
-	// that is up lasts as long as the client stays connected, and a span left
-	// open that long is held in memory and reaches no exporter until it ends.
-	// How long a session lived is reported by `sshmux.session.duration`.
-	ctx, span := s.Tracer.Start(ctx, "establish ssh session", spanKindServer)
-	attrs, err := s.establishSession(ctx, session, info)
-	endSpan(span, err, append(s.Tracer.connectionSpanAttributes(*info),
-		s.Tracer.peerAttributes(info.ClientPeer)...)...)
-	if err != nil {
-		return nil, err
+// establishSession brings a connection up to a session ready to be piped. The
+// session is reported as soon as the SSH transport is up, so that a handshake
+// that fails afterwards is still closed and logged, and the log attributes only
+// once the session is established.
+func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *connectionInfo) (*ssh.PipeSession, []slog.Attr, error) {
+	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
+		return nil, nil, err
 	}
-	return attrs, session.RunPipe()
-}
+	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
+	if err != nil {
+		return nil, nil, err
+	}
 
-// establishSession runs the downstream handshake and reports the log
-// attributes of a session that is up.
-func (s *Server) establishSession(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
 	handshakeTime := time.Now()
 	handshakeCtx, handshakeSpan := s.Tracer.Start(ctx, "ssh handshake")
-	err := s.Handshake(handshakeCtx, session, info)
+	err = s.Handshake(handshakeCtx, session, info)
 	endSpan(handshakeSpan, err, s.Tracer.connectionSpanAttributes(*info)...)
 	s.Metrics.HandshakeFinished(ctx, *info, err, time.Since(handshakeTime))
 	if err != nil {
-		return nil, err
+		return session, nil, err
 	}
 	info.Established = true
 	if err := session.SetDeadline(time.Time{}); err != nil {
-		return nil, err
+		return session, nil, err
 	}
-	return []slog.Attr{
+	return session, []slog.Attr{
 		slog.String("username", session.Downstream.User()),
 		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
 		slog.Bool("authenticated", true),
