@@ -859,3 +859,68 @@ func TestPrometheusTranslationStrategy(t *testing.T) {
 		}
 	})
 }
+
+// TestConventionAttributeNames pins how each convention resolves, and that the
+// two lines currently agree — the property that lets `ecs` be the stable choice
+// today at no cost.
+func TestConventionAttributeNames(t *testing.T) {
+	for _, convention := range []MetricsConvention{"", MetricsConventionDefault} {
+		names, err := conventionAttributeNames(convention)
+		if err != nil {
+			t.Fatalf("convention %q: %v", convention, err)
+		}
+		if names != defaultAttributeNames {
+			t.Errorf("convention %q did not resolve to the semantic conventions", convention)
+		}
+	}
+	names, err := conventionAttributeNames(MetricsConventionECS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names != ecsAttributeNames {
+		t.Error(`convention "ecs" did not resolve to the Elastic Common Schema`)
+	}
+
+	// The conventions adopted these fields from ECS, so the two lines name
+	// every attribute identically. This will stop holding when they diverge,
+	// and the test is what will say so.
+	if defaultAttributeNames != ecsAttributeNames {
+		t.Log("the conventions have diverged; the README table needs updating")
+	}
+
+	if _, err := conventionAttributeNames("nonsense"); err == nil {
+		t.Error("an unknown convention should be refused")
+	}
+}
+
+// TestConventionEndToEnd checks that the configured convention reaches the
+// exported labels.
+func TestConventionEndToEnd(t *testing.T) {
+	for _, convention := range []MetricsConvention{MetricsConventionDefault, MetricsConventionECS} {
+		t.Run(string(convention), func(t *testing.T) {
+			metrics, err := makeMetrics(MetricsConfig{
+				Enabled:    true,
+				Convention: convention,
+				Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := metrics.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer metrics.Shutdown(t.Context())
+
+			metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
+			want := `sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",user_name="vlab"} 1`
+			if body := scrape(t, metrics); !strings.Contains(body, want) {
+				t.Errorf("scrape does not contain %q:\n%s", want, body)
+			}
+		})
+	}
+
+	// A value that never came from a configuration file still cannot slip past.
+	if _, err := makeMetrics(MetricsConfig{Enabled: true, Convention: "nonsense"}); err == nil {
+		t.Error("an unknown convention should be refused at startup")
+	}
+}

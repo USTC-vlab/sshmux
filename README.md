@@ -84,6 +84,7 @@ Metrics settings configure the [OpenTelemetry](https://opentelemetry.io) metrics
 | Key                | Type          | Description                                                                                                   | Required | Example                              |
 | ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------ |
 | `enabled`          | `bool`        | Whether metrics collection is enabled. Defaults to `false`.                                                   | No       | `true`                               |
+| `convention`       | `string`      | Schema the attributes are named after, `"default"` or `"ecs"`. Defaults to `"default"`. See [Attribute Conventions](#attribute-conventions). | No | `"ecs"`          |
 | `service-name`     | `string`      | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                                       | No       | `"sshmux-vlab"`                      |
 | `attributes`       | `[]Attribute` | Extra resource attributes attached to every metric, e.g. to tag the deployment environment.                   | No       | `[{ name = "env", value = "prod" }]` |
 | `interval-seconds` | `uint`        | Interval at which metrics are pushed to the OTLP endpoint. Defaults to 60 seconds.                            | No       | `60`                                 |
@@ -146,6 +147,17 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | `enabled`  | `bool`     | Whether PROXY protocol support is enabled. Defaults to `false`. | No       | `true`                          |
 | `hosts`    | `[]string` | Host names from which PROXY protocol is allowed.                | No       | `["nginx.local", "127.0.0.22"]` |
 | `networks` | `[]string` | Network CIDRs from which PROXY protocol is allowed.             | No       | `["10.10.0.0/24"]`              |
+
+## Attribute Conventions
+
+`metrics.convention` selects how each attribute is named:
+
+| Value | Resolves each attribute against |
+| --- | --- |
+| `default` | the [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/), then the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
+| `ecs` | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
+
+They currently differ in no attribute.
 
 ## Metrics
 
