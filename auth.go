@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -126,6 +127,20 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 		return res.StatusCode, nil, err
 	}
 	return res.StatusCode, &response, nil
+}
+
+// instrumentedAuthenticator records the outcome and latency of every auth API
+// request made through the wrapped Authenticator.
+type instrumentedAuthenticator struct {
+	inner   Authenticator
+	metrics *Metrics
+}
+
+func (a *instrumentedAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+	start := time.Now()
+	status, response, err := a.inner.Auth(request, username)
+	a.metrics.AuthFinished(context.Background(), request.Method, status, err, time.Since(start))
+	return status, response, err
 }
 
 func timeoutFromSeconds(seconds uint, defaultTimeout time.Duration) time.Duration {

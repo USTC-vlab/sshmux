@@ -575,20 +575,6 @@ func errorType(err error) string {
 	return "other"
 }
 
-// instrumentedAuthenticator records the outcome and latency of every auth API
-// request made through the wrapped Authenticator.
-type instrumentedAuthenticator struct {
-	inner   Authenticator
-	metrics *Metrics
-}
-
-func (a *instrumentedAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
-	start := time.Now()
-	status, response, err := a.inner.Auth(request, username)
-	a.metrics.AuthFinished(context.Background(), request.Method, status, err, time.Since(start))
-	return status, response, err
-}
-
 func boolOrDefault(value *bool, fallback bool) bool {
 	if value == nil {
 		return fallback
