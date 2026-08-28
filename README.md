@@ -133,6 +133,9 @@ Prometheus settings configure the Prometheus scrape endpoint. They are grouped u
 | `enabled` | `bool`   | Whether the Prometheus endpoint is enabled. Defaults to `false`.         | No       | `true`               |
 | `address` | `string` | TCP host and port to serve metrics on. Defaults to `"127.0.0.1:9100"`.   | No       | `"127.0.0.1:9100"`   |
 | `path`    | `string` | HTTP path to serve metrics on. Defaults to `"/metrics"`.                 | No       | `"/metrics"`         |
+| `translation-strategy` | `string` | How OTLP names are rendered for Prometheus. One of `"UnderscoreEscapingWithSuffixes"` (default), `"NoUTF8EscapingWithSuffixes"` or `"NoTranslation"`. | No | `"NoTranslation"` |
+
+See the [OpenTelemetry Collector's Prometheus exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/prometheusexporter/README.md) for what each translation strategy does.
 
 ### PROXY Protocol Settings
 

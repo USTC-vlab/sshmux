@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net/netip"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // configFixture pairs a configuration file under `fixtures` with the values it
@@ -239,4 +242,36 @@ func TestConvertProxyPolicyConfig(t *testing.T) {
 	if len(policy.AllowedCIDRs) != 0 || len(policy.AllowedHosts) != 0 {
 		t.Errorf("disabled policy = %+v, want empty", policy)
 	}
+}
+
+// TestEnumeratedMetricsKeys checks that a good translation strategy decodes,
+// that a bad one is refused while parsing rather than later, and that every
+// accepted value resolves.
+func TestEnumeratedMetricsKeys(t *testing.T) {
+	strategies := []PrometheusTranslationStrategy{UnderscoreEscaping, NoUTF8Escaping, NoTranslation}
+
+	var config Config
+	for _, strategy := range strategies {
+		toml := fmt.Sprintf("[metrics.prometheus]\ntranslation-strategy = %q\n", strategy)
+		if err := unmarshalConfig(toml, &config); err != nil {
+			t.Errorf("strategy %q: %v", strategy, err)
+		}
+	}
+
+	// A bad value fails while the file is being read, so the error can name it.
+	// Prometheus does not support this one, so it is not among the accepted values.
+	if err := unmarshalConfig("[metrics.prometheus]\ntranslation-strategy = \"UnderscoreEscapingWithoutSuffixes\"\n", &config); err == nil {
+		t.Error("UnderscoreEscapingWithoutSuffixes should be refused while parsing")
+	}
+
+	// Every accepted value must resolve, or the type and the resolver drifted.
+	for _, strategy := range strategies {
+		if _, err := prometheusTranslationStrategy(strategy); err != nil {
+			t.Errorf("strategy %q is accepted but does not resolve: %v", strategy, err)
+		}
+	}
+}
+
+func unmarshalConfig(text string, config *Config) error {
+	return toml.Unmarshal([]byte(text), config)
 }

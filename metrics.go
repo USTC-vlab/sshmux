@@ -16,6 +16,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/otlptranslator"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -44,18 +45,21 @@ const (
 	envOTLPMetricsProtocol = "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
 )
 
-// Attribute keys shared by the instruments below.
+// From the OpenTelemetry semantic conventions.
 const (
-	// From the OpenTelemetry semantic conventions.
 	attrErrorType     = attribute.Key("error.type")
 	attrUserName      = attribute.Key("user.name")
 	attrServerAddress = attribute.Key("server.address")
 	attrServerPort    = attribute.Key("server.port")
-	// From the Elastic Common Schema, which the semantic conventions have no
-	// equivalent for yet.
-	attrResult = attribute.Key("event.outcome")
-	// sshmux's own, namespaced so that they cannot collide with a future
-	// convention. Neither schema describes an authentication method.
+)
+
+// From the Elastic Common Schema, which the semantic conventions have no
+// equivalent for yet.
+const attrResult = attribute.Key("event.outcome")
+
+// sshmux's own, namespaced so that they cannot collide with a future
+// convention. Neither schema describes an authentication method.
+const (
 	attrAuthMethod = attribute.Key("sshmux.auth.method")
 	attrAuthStatus = attribute.Key("sshmux.auth.status")
 )
@@ -131,8 +135,16 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 		readers = append(readers, sdkmetric.NewPeriodicReader(exporter, readerOptions...))
 	}
 	if config.Prometheus.Enabled {
+		strategy, err := prometheusTranslationStrategy(config.Prometheus.TranslationStrategy)
+		if err != nil {
+			return nil, err
+		}
 		registry := prometheus.NewRegistry()
-		reader, err := otelprom.New(otelprom.WithRegisterer(registry), otelprom.WithoutScopeInfo())
+		reader, err := otelprom.New(
+			otelprom.WithRegisterer(registry),
+			otelprom.WithoutScopeInfo(),
+			otelprom.WithTranslationStrategy(strategy),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to set up Prometheus exporter: %w", err)
 		}
@@ -163,6 +175,27 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 	}
 	metrics.provider = sdkmetric.NewMeterProvider(options...)
 	return newMetrics(metrics, metrics.provider.Meter(metricsScopeName))
+}
+
+// prometheusTranslationStrategy resolves how OTLP names are rendered for
+// Prometheus. The names are the ones the OpenTelemetry Collector's Prometheus
+// exporter uses, so that a strategy can be carried over from a collector
+// configuration unchanged.
+//
+// UnderscoreEscapingWithoutSuffixes is deliberately not accepted: Prometheus
+// does not support it directly and it is rarely wanted.
+func prometheusTranslationStrategy(configured PrometheusTranslationStrategy) (otlptranslator.TranslationStrategyOption, error) {
+	switch configured {
+	case "", UnderscoreEscaping:
+		return otlptranslator.UnderscoreEscapingWithSuffixes, nil
+	case NoUTF8Escaping:
+		return otlptranslator.NoUTF8EscapingWithSuffixes, nil
+	case NoTranslation:
+		return otlptranslator.NoTranslation, nil
+	default:
+		// Unreachable: validateMetricsConfig accepts only the names above.
+		return "", fmt.Errorf("unsupported Prometheus translation strategy: %s", configured)
+	}
 }
 
 // durationViews replaces the SDK's default histogram buckets, which are tuned

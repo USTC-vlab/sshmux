@@ -766,3 +766,96 @@ func TestConnectionGroupingDisabled(t *testing.T) {
 		t.Errorf("scrape output does not contain %q:\n%s", want, body)
 	}
 }
+
+// scrapeAs fetches the Prometheus endpoint with a given Accept header, so that
+// UTF-8 name negotiation can be exercised.
+func scrapeAs(t *testing.T, metrics *Metrics, accept string) string {
+	t.Helper()
+	request, err := http.NewRequest("GET", fmt.Sprintf("http://%s%s", metrics.PrometheusAddr(), metrics.promPath), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Accept", accept)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+// startPrometheus brings up a Metrics with only the Prometheus endpoint, on the
+// given translation strategy, and records one session.
+func startPrometheus(t *testing.T, strategy PrometheusTranslationStrategy) *Metrics {
+	t.Helper()
+	metrics, err := makeMetrics(MetricsConfig{
+		Enabled: true,
+		Prometheus: MetricsPrometheusConfig{
+			Enabled: true, Address: "127.0.0.1:0", TranslationStrategy: strategy,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := metrics.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { metrics.Shutdown(context.Background()) })
+	metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
+	return metrics
+}
+
+// TestPrometheusTranslationStrategy pins what each accepted strategy actually
+// produces. Note that a scraper only ever sees the untranslated names if it
+// negotiates UTF-8; without that the exposition escapes them regardless.
+func TestPrometheusTranslationStrategy(t *testing.T) {
+	const utf8Accept = "text/plain;version=1.0.0;escaping=allow-utf-8"
+
+	t.Run("escaped by default", func(t *testing.T) {
+		for _, strategy := range []PrometheusTranslationStrategy{"", UnderscoreEscaping} {
+			body := scrape(t, startPrometheus(t, strategy))
+			if !strings.Contains(body, `sshmux_sessions_total{`) {
+				t.Errorf("strategy %q: no escaped name with suffix:\n%s", strategy, body)
+			}
+		}
+	})
+
+	t.Run("NoTranslation drops the suffix", func(t *testing.T) {
+		body := scrape(t, startPrometheus(t, NoTranslation))
+		if !strings.Contains(body, `sshmux_sessions{`) {
+			t.Errorf("no unsuffixed name:\n%s", body)
+		}
+		if strings.Contains(body, `sshmux_sessions_total{`) {
+			t.Error("the _total suffix should not be added")
+		}
+	})
+
+	t.Run("dots survive for a UTF-8 scraper", func(t *testing.T) {
+		metrics := startPrometheus(t, NoUTF8Escaping)
+		if body := scrapeAs(t, metrics, utf8Accept); !strings.Contains(body, `{"sshmux.sessions_total"`) ||
+			!strings.Contains(body, `"user.name"="vlab"`) {
+			t.Errorf("names were escaped despite negotiation:\n%s", body)
+		}
+		// The same endpoint still escapes for a scraper that does not ask.
+		if body := scrape(t, metrics); !strings.Contains(body, `sshmux_sessions_total{`) {
+			t.Errorf("names were not escaped for a plain scraper:\n%s", body)
+		}
+	})
+
+	t.Run("rejected values", func(t *testing.T) {
+		// Prometheus does not support this one directly.
+		for _, strategy := range []PrometheusTranslationStrategy{"UnderscoreEscapingWithoutSuffixes", "nonsense"} {
+			_, err := makeMetrics(MetricsConfig{
+				Enabled:    true,
+				Prometheus: MetricsPrometheusConfig{Enabled: true, TranslationStrategy: strategy},
+			})
+			if err == nil {
+				t.Errorf("strategy %q should be rejected", strategy)
+			}
+		}
+	})
+}
