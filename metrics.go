@@ -16,6 +16,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/otlptranslator"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -44,30 +45,73 @@ const (
 	envOTLPMetricsProtocol = "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
 )
 
-// Attribute keys shared by the instruments below.
-const (
-	attrResult          = attribute.Key("result")
-	attrErrorType       = attribute.Key("error.type")
-	attrAuthMethod      = attribute.Key("auth.method")
-	attrAuthStatus      = attribute.Key("auth.status")
-	attrUsername        = attribute.Key("username")
-	attrUpstreamAddress = attribute.Key("upstream.address")
-)
+// attributeNames is the set of attribute keys one convention resolves to.
+// Only the names differ between conventions; the values never do.
+type attributeNames struct {
+	result        attribute.Key
+	errorType     attribute.Key
+	userName      attribute.Key
+	serverAddress attribute.Key
+	serverPort    attribute.Key
+	authMethod    attribute.Key
+	authStatus    attribute.Key
+}
 
-var (
-	resultSuccess = attrResult.String("success")
-	resultFailure = attrResult.String("failure")
-)
+// defaultAttributeNames resolves each attribute against the OpenTelemetry
+// semantic conventions first, then the Elastic Common Schema, then sshmux's
+// own namespace, and follows the conventions wherever they move.
+var defaultAttributeNames = attributeNames{
+	errorType:     attribute.Key("error.type"),     // semconv
+	userName:      attribute.Key("user.name"),      // semconv
+	serverAddress: attribute.Key("server.address"), // semconv
+	serverPort:    attribute.Key("server.port"),    // semconv
+	result:        attribute.Key("event.outcome"),  // ECS; semconv has no equivalent
+	authMethod:    attribute.Key("sshmux.auth.method"),
+	authStatus:    attribute.Key("sshmux.auth.status"),
+}
+
+// ecsAttributeNames resolves against the Elastic Common Schema only, which does
+// not move when the semantic conventions do.
+//
+// It currently names every attribute identically to defaultAttributeNames,
+// because the conventions adopted these fields from ECS. The two are kept
+// apart so that they can diverge without the configuration changing shape.
+var ecsAttributeNames = attributeNames{
+	errorType:     attribute.Key("error.type"),
+	userName:      attribute.Key("user.name"),
+	serverAddress: attribute.Key("server.address"),
+	serverPort:    attribute.Key("server.port"),
+	result:        attribute.Key("event.outcome"),
+	authMethod:    attribute.Key("sshmux.auth.method"),
+	authStatus:    attribute.Key("sshmux.auth.status"),
+}
+
+// conventionAttributeNames resolves the configured convention.
+func conventionAttributeNames(convention MetricsConvention) (attributeNames, error) {
+	switch convention {
+	case "", MetricsConventionDefault:
+		return defaultAttributeNames, nil
+	case MetricsConventionECS:
+		return ecsAttributeNames, nil
+	default:
+		// Unreachable: validateMetricsConfig accepts only the names above.
+		return attributeNames{}, fmt.Errorf("unsupported convention: %s", convention)
+	}
+}
+
+func (n attributeNames) success() attribute.KeyValue { return n.result.String("success") }
+func (n attributeNames) failure() attribute.KeyValue { return n.result.String("failure") }
 
 // connectionInfo is the per-connection state reported to the metrics recorder.
 // Fields are zero until they become known: Username is only set once the client
-// has sent its first auth request, and Upstream only once the auth API has
+// has sent its first auth request, and the upstream only once the auth API has
 // answered.
 type connectionInfo struct {
 	Username string
-	// Upstream is the backend address as host:port, as returned by the auth API
-	// and before any PROXY protocol override.
-	Upstream string
+	// UpstreamHost and UpstreamPort are the backend the auth API returned,
+	// before any PROXY protocol override.
+	UpstreamHost string
+	UpstreamPort uint16
 	// Established records whether the handshake completed.
 	Established bool
 }
@@ -80,7 +124,9 @@ type Metrics struct {
 	// groupConnections reports whether the connection metrics carry the username
 	// and upstream dimensions.
 	groupConnections bool
-	provider         *sdkmetric.MeterProvider
+	// attrs holds the attribute names the configured convention resolved to.
+	attrs    attributeNames
+	provider *sdkmetric.MeterProvider
 
 	promAddress  string
 	promPath     string
@@ -99,9 +145,14 @@ type Metrics struct {
 }
 
 func makeMetrics(config MetricsConfig) (*Metrics, error) {
+	names, err := conventionAttributeNames(config.Convention)
+	if err != nil {
+		return nil, err
+	}
 	metrics := &Metrics{
 		enabled:          config.Enabled,
 		groupConnections: boolOrDefault(config.ConnectionGrouping, true),
+		attrs:            names,
 	}
 	if !config.Enabled {
 		return newMetrics(metrics, noop.NewMeterProvider().Meter(metricsScopeName))
@@ -124,8 +175,16 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 		readers = append(readers, sdkmetric.NewPeriodicReader(exporter, readerOptions...))
 	}
 	if config.Prometheus.Enabled {
+		strategy, err := prometheusTranslationStrategy(config.Prometheus.TranslationStrategy)
+		if err != nil {
+			return nil, err
+		}
 		registry := prometheus.NewRegistry()
-		reader, err := otelprom.New(otelprom.WithRegisterer(registry), otelprom.WithoutScopeInfo())
+		reader, err := otelprom.New(
+			otelprom.WithRegisterer(registry),
+			otelprom.WithoutScopeInfo(),
+			otelprom.WithTranslationStrategy(strategy),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to set up Prometheus exporter: %w", err)
 		}
@@ -156,6 +215,27 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 	}
 	metrics.provider = sdkmetric.NewMeterProvider(options...)
 	return newMetrics(metrics, metrics.provider.Meter(metricsScopeName))
+}
+
+// prometheusTranslationStrategy resolves how OTLP names are rendered for
+// Prometheus. The names are the ones the OpenTelemetry Collector's Prometheus
+// exporter uses, so that a strategy can be carried over from a collector
+// configuration unchanged.
+//
+// UnderscoreEscapingWithoutSuffixes is deliberately not accepted: Prometheus
+// does not support it directly and it is rarely wanted.
+func prometheusTranslationStrategy(configured PrometheusTranslationStrategy) (otlptranslator.TranslationStrategyOption, error) {
+	switch configured {
+	case "", UnderscoreEscaping:
+		return otlptranslator.UnderscoreEscapingWithSuffixes, nil
+	case NoUTF8Escaping:
+		return otlptranslator.NoUTF8EscapingWithSuffixes, nil
+	case NoTranslation:
+		return otlptranslator.NoTranslation, nil
+	default:
+		// Unreachable: validateMetricsConfig accepts only the names above.
+		return "", fmt.Errorf("unsupported Prometheus translation strategy: %s", configured)
+	}
 }
 
 // durationViews replaces the SDK's default histogram buckets, which are tuned
@@ -442,14 +522,14 @@ func (m *Metrics) UpstreamDialed(ctx context.Context, err error) {
 	if !m.enabled {
 		return
 	}
-	m.upstreamTotal.Add(ctx, 1, metric.WithAttributeSet(attribute.NewSet(resultAttributes(err)...)))
+	m.upstreamTotal.Add(ctx, 1, metric.WithAttributeSet(attribute.NewSet(m.attrs.resultAttributes(err)...)))
 }
 
 func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, err error, duration time.Duration) {
 	if !m.enabled {
 		return
 	}
-	attrs := append(resultAttributes(err), attrAuthMethod.String(method), attrAuthStatus.Int(status))
+	attrs := append(m.attrs.resultAttributes(err), m.attrs.authMethod.String(method), m.attrs.authStatus.Int(status))
 	set := metric.WithAttributeSet(attribute.NewSet(attrs...))
 	m.authRequestsTotal.Add(ctx, 1, set)
 	m.authDuration.Record(ctx, duration.Seconds(), set)
@@ -459,21 +539,22 @@ func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, e
 // dimensions the connection metrics are grouped by, unless the grouping has
 // been turned off.
 func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribute.Set {
-	attrs := resultAttributes(err)
+	attrs := m.attrs.resultAttributes(err)
 	if m.groupConnections {
 		attrs = append(attrs,
-			attrUsername.String(valueOrDefault(info.Username, unknownAttributeValue)),
-			attrUpstreamAddress.String(valueOrDefault(info.Upstream, unknownAttributeValue)),
+			m.attrs.userName.String(valueOrDefault(info.Username, unknownAttributeValue)),
+			m.attrs.serverAddress.String(valueOrDefault(info.UpstreamHost, unknownAttributeValue)),
+			m.attrs.serverPort.Int(int(info.UpstreamPort)),
 		)
 	}
 	return attribute.NewSet(attrs...)
 }
 
-func resultAttributes(err error) []attribute.KeyValue {
+func (n attributeNames) resultAttributes(err error) []attribute.KeyValue {
 	if err == nil {
-		return []attribute.KeyValue{resultSuccess}
+		return []attribute.KeyValue{n.success()}
 	}
-	return []attribute.KeyValue{resultFailure, attrErrorType.String(errorType(err))}
+	return []attribute.KeyValue{n.failure(), n.errorType.String(errorType(err))}
 }
 
 func errorType(err error) string {

@@ -22,9 +22,10 @@ import (
 
 // testConnection is the connection identity used by the metric assertions.
 var testConnection = connectionInfo{
-	Username:    "vlab",
-	Upstream:    "10.0.0.7:22",
-	Established: true,
+	Username:     "vlab",
+	UpstreamHost: "10.0.0.7",
+	UpstreamPort: 22,
+	Established:  true,
 }
 
 // prometheusMetrics starts a Metrics instance with only the Prometheus
@@ -109,13 +110,13 @@ func TestMetricsPrometheusEndpoint(t *testing.T) {
 	metrics.ConnectionClosed(ctx, testConnection, os.ErrDeadlineExceeded, 2*time.Second)
 
 	body := scrape(t, metrics)
-	const group = `result="success",upstream_address="10.0.0.7:22",username="vlab"`
+	const group = `event_outcome="success",server_address="10.0.0.7",server_port="22",user_name="vlab"`
 	for _, want := range []string{
 		`sshmux_connections_total 2`,
 		`sshmux_connections_active 0`,
 		`sshmux_sessions_total{` + group + `} 1`,
-		`sshmux_sessions_total{error_type="timeout",result="failure",upstream_address="10.0.0.7:22",username="vlab"} 1`,
-		`sshmux_upstream_connections_total{result="success"} 1`,
+		`sshmux_sessions_total{error_type="timeout",event_outcome="failure",server_address="10.0.0.7",server_port="22",user_name="vlab"} 1`,
+		`sshmux_upstream_connections_total{event_outcome="success"} 1`,
 		`sshmux_session_duration_seconds_count{` + group + `} 1`,
 		`sshmux_handshake_duration_seconds_count{` + group + `} 1`,
 	} {
@@ -171,9 +172,9 @@ func TestInstrumentedAuthenticator(t *testing.T) {
 
 	body := scrape(t, metrics)
 	for _, want := range []string{
-		`sshmux_auth_requests_total{auth_method="publickey",auth_status="401",result="success"} 1`,
-		`sshmux_auth_requests_total{auth_method="keyboard-interactive",auth_status="0",error_type="eof",result="failure"} 1`,
-		`sshmux_auth_duration_seconds_count{auth_method="publickey",auth_status="401",result="success"} 1`,
+		`sshmux_auth_requests_total{event_outcome="success",sshmux_auth_method="publickey",sshmux_auth_status="401"} 1`,
+		`sshmux_auth_requests_total{error_type="eof",event_outcome="failure",sshmux_auth_method="keyboard-interactive",sshmux_auth_status="0"} 1`,
+		`sshmux_auth_duration_seconds_count{event_outcome="success",sshmux_auth_method="publickey",sshmux_auth_status="401"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scrape output does not contain %q:\n%s", want, body)
@@ -359,9 +360,9 @@ func TestConnectionGrouping(t *testing.T) {
 
 	body := scrape(t, metrics)
 	for _, want := range []string{
-		`sshmux_sessions_total{result="success",upstream_address="10.0.0.7:22",username="vlab"} 1`,
-		`sshmux_session_duration_seconds_count{result="success",upstream_address="10.0.0.7:22",username="vlab"} 1`,
-		`sshmux_sessions_total{error_type="eof",result="failure",upstream_address="unknown",username="unknown"} 1`,
+		`sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",user_name="vlab"} 1`,
+		`sshmux_session_duration_seconds_count{event_outcome="success",server_address="10.0.0.7",server_port="22",user_name="vlab"} 1`,
+		`sshmux_sessions_total{error_type="eof",event_outcome="failure",server_address="unknown",server_port="0",user_name="unknown"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scrape output does not contain %q:\n%s", want, body)
@@ -673,8 +674,8 @@ func TestServerMetricsUpstreamGrouping(t *testing.T) {
 
 	// The session is recorded once its handler winds down, shortly after the
 	// client exits.
-	want := fmt.Sprintf(`sshmux_sessions_total{result="success",upstream_address=%q,username=%q} 1`,
-		sshdServerAddr.String(), currentUser.Username)
+	want := fmt.Sprintf(`sshmux_sessions_total{event_outcome="success",server_address=%q,server_port="%d",user_name=%q} 1`,
+		sshdServerAddr.IP.String(), sshdServerAddr.Port, currentUser.Username)
 	deadline := time.Now().Add(5 * time.Second)
 	var body string
 	for time.Now().Before(deadline) {
@@ -704,9 +705,10 @@ func recordSessions(t *testing.T, metrics *Metrics, count int) {
 	t.Helper()
 	for i := range count {
 		info := connectionInfo{
-			Username:    fmt.Sprintf("user%d", i),
-			Upstream:    fmt.Sprintf("10.0.0.%d:22", i),
-			Established: true,
+			Username:     fmt.Sprintf("user%d", i),
+			UpstreamHost: fmt.Sprintf("10.0.0.%d", i),
+			UpstreamPort: 22,
+			Established:  true,
 		}
 		metrics.ConnectionClosed(t.Context(), info, nil, time.Second)
 	}
@@ -760,7 +762,165 @@ func TestConnectionGroupingDisabled(t *testing.T) {
 			t.Errorf("scrape output still contains %q:\n%s", unwanted, body)
 		}
 	}
-	if want := `sshmux_sessions_total{result="success"} 2500`; !strings.Contains(body, want) {
+	if want := `sshmux_sessions_total{event_outcome="success"} 2500`; !strings.Contains(body, want) {
 		t.Errorf("scrape output does not contain %q:\n%s", want, body)
+	}
+}
+
+// scrapeAs fetches the Prometheus endpoint with a given Accept header, so that
+// UTF-8 name negotiation can be exercised.
+func scrapeAs(t *testing.T, metrics *Metrics, accept string) string {
+	t.Helper()
+	request, err := http.NewRequest("GET", fmt.Sprintf("http://%s%s", metrics.PrometheusAddr(), metrics.promPath), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Accept", accept)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+// startPrometheus brings up a Metrics with only the Prometheus endpoint, on the
+// given translation strategy, and records one session.
+func startPrometheus(t *testing.T, strategy PrometheusTranslationStrategy) *Metrics {
+	t.Helper()
+	metrics, err := makeMetrics(MetricsConfig{
+		Enabled: true,
+		Prometheus: MetricsPrometheusConfig{
+			Enabled: true, Address: "127.0.0.1:0", TranslationStrategy: strategy,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := metrics.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { metrics.Shutdown(context.Background()) })
+	metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
+	return metrics
+}
+
+// TestPrometheusTranslationStrategy pins what each accepted strategy actually
+// produces. Note that a scraper only ever sees the untranslated names if it
+// negotiates UTF-8; without that the exposition escapes them regardless.
+func TestPrometheusTranslationStrategy(t *testing.T) {
+	const utf8Accept = "text/plain;version=1.0.0;escaping=allow-utf-8"
+
+	t.Run("escaped by default", func(t *testing.T) {
+		for _, strategy := range []PrometheusTranslationStrategy{"", UnderscoreEscaping} {
+			body := scrape(t, startPrometheus(t, strategy))
+			if !strings.Contains(body, `sshmux_sessions_total{`) {
+				t.Errorf("strategy %q: no escaped name with suffix:\n%s", strategy, body)
+			}
+		}
+	})
+
+	t.Run("NoTranslation drops the suffix", func(t *testing.T) {
+		body := scrape(t, startPrometheus(t, NoTranslation))
+		if !strings.Contains(body, `sshmux_sessions{`) {
+			t.Errorf("no unsuffixed name:\n%s", body)
+		}
+		if strings.Contains(body, `sshmux_sessions_total{`) {
+			t.Error("the _total suffix should not be added")
+		}
+	})
+
+	t.Run("dots survive for a UTF-8 scraper", func(t *testing.T) {
+		metrics := startPrometheus(t, NoUTF8Escaping)
+		if body := scrapeAs(t, metrics, utf8Accept); !strings.Contains(body, `{"sshmux.sessions_total"`) ||
+			!strings.Contains(body, `"user.name"="vlab"`) {
+			t.Errorf("names were escaped despite negotiation:\n%s", body)
+		}
+		// The same endpoint still escapes for a scraper that does not ask.
+		if body := scrape(t, metrics); !strings.Contains(body, `sshmux_sessions_total{`) {
+			t.Errorf("names were not escaped for a plain scraper:\n%s", body)
+		}
+	})
+
+	t.Run("rejected values", func(t *testing.T) {
+		// Prometheus does not support this one directly.
+		for _, strategy := range []PrometheusTranslationStrategy{"UnderscoreEscapingWithoutSuffixes", "nonsense"} {
+			_, err := makeMetrics(MetricsConfig{
+				Enabled:    true,
+				Prometheus: MetricsPrometheusConfig{Enabled: true, TranslationStrategy: strategy},
+			})
+			if err == nil {
+				t.Errorf("strategy %q should be rejected", strategy)
+			}
+		}
+	})
+}
+
+// TestConventionAttributeNames pins how each convention resolves, and that the
+// two lines currently agree — the property that lets `ecs` be the stable choice
+// today at no cost.
+func TestConventionAttributeNames(t *testing.T) {
+	for _, convention := range []MetricsConvention{"", MetricsConventionDefault} {
+		names, err := conventionAttributeNames(convention)
+		if err != nil {
+			t.Fatalf("convention %q: %v", convention, err)
+		}
+		if names != defaultAttributeNames {
+			t.Errorf("convention %q did not resolve to the semantic conventions", convention)
+		}
+	}
+	names, err := conventionAttributeNames(MetricsConventionECS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names != ecsAttributeNames {
+		t.Error(`convention "ecs" did not resolve to the Elastic Common Schema`)
+	}
+
+	// The conventions adopted these fields from ECS, so the two lines name
+	// every attribute identically. This will stop holding when they diverge,
+	// and the test is what will say so.
+	if defaultAttributeNames != ecsAttributeNames {
+		t.Log("the conventions have diverged; the README table needs updating")
+	}
+
+	if _, err := conventionAttributeNames("nonsense"); err == nil {
+		t.Error("an unknown convention should be refused")
+	}
+}
+
+// TestConventionEndToEnd checks that the configured convention reaches the
+// exported labels.
+func TestConventionEndToEnd(t *testing.T) {
+	for _, convention := range []MetricsConvention{MetricsConventionDefault, MetricsConventionECS} {
+		t.Run(string(convention), func(t *testing.T) {
+			metrics, err := makeMetrics(MetricsConfig{
+				Enabled:    true,
+				Convention: convention,
+				Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := metrics.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer metrics.Shutdown(t.Context())
+
+			metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
+			want := `sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",user_name="vlab"} 1`
+			if body := scrape(t, metrics); !strings.Contains(body, want) {
+				t.Errorf("scrape does not contain %q:\n%s", want, body)
+			}
+		})
+	}
+
+	// A value that never came from a configuration file still cannot slip past.
+	if _, err := makeMetrics(MetricsConfig{Enabled: true, Convention: "nonsense"}); err == nil {
+		t.Error("an unknown convention should be refused at startup")
 	}
 }

@@ -84,10 +84,11 @@ Metrics settings configure the [OpenTelemetry](https://opentelemetry.io) metrics
 | Key                | Type          | Description                                                                                                   | Required | Example                              |
 | ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------ |
 | `enabled`          | `bool`        | Whether metrics collection is enabled. Defaults to `false`.                                                   | No       | `true`                               |
+| `convention`       | `string`      | Schema the attributes are named after, `"default"` or `"ecs"`. Defaults to `"default"`. See [Attribute Conventions](#attribute-conventions). | No | `"ecs"`          |
 | `service-name`     | `string`      | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                                       | No       | `"sshmux-vlab"`                      |
 | `attributes`       | `[]Attribute` | Extra resource attributes attached to every metric, e.g. to tag the deployment environment.                   | No       | `[{ name = "env", value = "prod" }]` |
 | `interval-seconds` | `uint`        | Interval at which metrics are pushed to the OTLP endpoint. Defaults to 60 seconds.                            | No       | `60`                                 |
-| `connection-grouping` | `bool`     | Whether the connection metrics carry the `username` and `upstream.address` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false`   |
+| `connection-grouping` | `bool`     | Whether the connection metrics carry the `user.name`, `server.address` and `server.port` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false`   |
 
 `Attribute` is a table with a `name` and a `value`, both `string`s.
 
@@ -133,6 +134,9 @@ Prometheus settings configure the Prometheus scrape endpoint. They are grouped u
 | `enabled` | `bool`   | Whether the Prometheus endpoint is enabled. Defaults to `false`.         | No       | `true`               |
 | `address` | `string` | TCP host and port to serve metrics on. Defaults to `"127.0.0.1:9100"`.   | No       | `"127.0.0.1:9100"`   |
 | `path`    | `string` | HTTP path to serve metrics on. Defaults to `"/metrics"`.                 | No       | `"/metrics"`         |
+| `translation-strategy` | `string` | How OTLP names are rendered for Prometheus. One of `"UnderscoreEscapingWithSuffixes"` (default), `"NoUTF8EscapingWithSuffixes"` or `"NoTranslation"`. | No | `"NoTranslation"` |
+
+See the [OpenTelemetry Collector's Prometheus exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/prometheusexporter/README.md) for what each translation strategy does.
 
 ### PROXY Protocol Settings
 
@@ -143,6 +147,17 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | `enabled`  | `bool`     | Whether PROXY protocol support is enabled. Defaults to `false`. | No       | `true`                          |
 | `hosts`    | `[]string` | Host names from which PROXY protocol is allowed.                | No       | `["nginx.local", "127.0.0.22"]` |
 | `networks` | `[]string` | Network CIDRs from which PROXY protocol is allowed.             | No       | `["10.10.0.0/24"]`              |
+
+## Attribute Conventions
+
+`metrics.convention` selects how each attribute is named:
+
+| Value | Resolves each attribute against |
+| --- | --- |
+| `default` | the [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/), then the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
+| `ecs` | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
+
+They currently differ in no attribute.
 
 ## Metrics
 
@@ -156,29 +171,30 @@ The metric names below are the OpenTelemetry ones. The Prometheus endpoint rende
 | ---------------------------- | --------------- | -------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
 | `sshmux.connections`         | Counter         | `{connection}` | —                                              | Connections accepted by `sshmux`.                                 |
 | `sshmux.connections.active`  | UpDownCounter   | `{connection}` | —                                              | Connections currently being served.                               |
-| `sshmux.sessions`            | Counter         | `{session}`    | `result`, `error.type`, `username`, `upstream.address` | Finished SSH proxy sessions.                              |
-| `sshmux.session.duration`    | Histogram       | `s`            | `result`, `error.type`, `username`, `upstream.address` | Session lifetime, from accept to close.                   |
-| `sshmux.handshake.duration`  | Histogram       | `s`            | `result`, `error.type`, `username`, `upstream.address` | Downstream handshake and authentication latency.          |
-| `sshmux.auth.requests`       | Counter         | `{request}`    | `result`, `error.type`, `auth.method`, `auth.status` | Requests sent to the auth API.                              |
-| `sshmux.auth.duration`       | Histogram       | `s`            | `result`, `error.type`, `auth.method`, `auth.status` | Auth API request latency.                                   |
-| `sshmux.upstream.connections`| Counter         | `{connection}` | `result`, `error.type`                         | Connection attempts to upstream SSH servers.                      |
+| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions.                          |
+| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close.               |
+| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency.      |
+| `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Requests sent to the auth API.   |
+| `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Auth API request latency.        |
+| `sshmux.upstream.connections`| Counter         | `{connection}` | `event.outcome`, `error.type`                     | Connection attempts to upstream SSH servers.          |
 
-`result` is either `success` or `failure`. On failure, `error.type` classifies the error as one of `eof`, `timeout`, `canceled`, `closed` or `other`. These sets are deliberately closed, so that a misbehaving client cannot blow up the time series cardinality.
+`event.outcome` is either `success` or `failure`. On failure, `error.type` classifies the error as one of `eof`, `timeout`, `canceled`, `closed` or `other`. These sets are deliberately closed, so that a misbehaving client cannot blow up the time series cardinality.
 
-For `sshmux.sessions` and `sshmux.session.duration`, `result` reports whether the session was *established*: an SSH client ends a healthy session by disconnecting, so how a session terminated once it was up is not counted against it. Use `sshmux.handshake.duration` to tell apart where an unestablished session failed.
+For `sshmux.sessions` and `sshmux.session.duration`, `event.outcome` reports whether the session was *established*: an SSH client ends a healthy session by disconnecting, so how a session terminated once it was up is not counted against it. Use `sshmux.handshake.duration` to tell apart where an unestablished session failed.
 
 ### Connection Grouping
 
-`sshmux.sessions`, `sshmux.session.duration` and `sshmux.handshake.duration` are grouped by two dimensions:
+`sshmux.sessions`, `sshmux.session.duration` and `sshmux.handshake.duration` are grouped by:
 
 | Attribute          | Description                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------ |
-| `username`         | Username the client authenticated as.                                                |
-| `upstream.address` | Backend as `host:port`, as returned by the auth API and before any PROXY protocol override. |
+| `user.name`        | Username the client authenticated as.                                                |
+| `server.address`   | Backend host, as returned by the auth API and before any PROXY protocol override.    |
+| `server.port`      | Backend port, from the same response.                                                |
 
-Either is recorded as `unknown` when it is not yet known, which is the case for a connection that failed before its first auth request or before the auth API answered.
+Each is recorded as `unknown` when it is not yet known, which is the case for a connection that failed before its first auth request or before the auth API answered.
 
-`sshmux.connections` and `sshmux.connections.active` are recorded when a connection is accepted, before either dimension is known, so they carry no grouping.
+`sshmux.connections` and `sshmux.connections.active` are recorded when a connection is accepted, before any of them is known, so they carry no grouping.
 
 Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving one series per outcome.
 

@@ -55,6 +55,7 @@ type RecoveryConfig struct {
 
 type MetricsConfig struct {
 	Enabled            bool                     `toml:"enabled"`
+	Convention         MetricsConvention        `toml:"convention,omitempty"`
 	ServiceName        string                   `toml:"service-name,omitempty"`
 	Attributes         []MetricsAttributeConfig `toml:"attributes,omitempty"`
 	IntervalSeconds    uint                     `toml:"interval-seconds,omitempty"`
@@ -77,9 +78,10 @@ type MetricsOTLPConfig struct {
 }
 
 type MetricsPrometheusConfig struct {
-	Enabled bool   `toml:"enabled"`
-	Address string `toml:"address,omitempty"`
-	Path    string `toml:"path,omitempty"`
+	Enabled             bool                          `toml:"enabled"`
+	Address             string                        `toml:"address,omitempty"`
+	Path                string                        `toml:"path,omitempty"`
+	TranslationStrategy PrometheusTranslationStrategy `toml:"translation-strategy,omitempty"`
 }
 
 type Config struct {
@@ -108,6 +110,57 @@ type LegacyConfig struct {
 	UsernameNoPassword     []string `json:"username-nopassword"`
 	InvalidUsername        []string `json:"invalid-username"`
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
+}
+
+// MetricsConvention names the schema the metric attributes follow.
+type MetricsConvention string
+
+const (
+	// MetricsConventionDefault resolves each attribute against the
+	// OpenTelemetry semantic conventions, then the Elastic Common Schema, then
+	// sshmux's own namespace, and follows the conventions wherever they move.
+	MetricsConventionDefault MetricsConvention = "default"
+	// MetricsConventionECS resolves against the Elastic Common Schema only,
+	// which does not move.
+	MetricsConventionECS MetricsConvention = "ecs"
+)
+
+func (c *MetricsConvention) UnmarshalText(text []byte) error {
+	switch value := MetricsConvention(text); value {
+	case "", MetricsConventionDefault, MetricsConventionECS:
+		*c = value
+		return nil
+	default:
+		return fmt.Errorf("unsupported metrics convention %q, want %q or %q",
+			value, MetricsConventionDefault, MetricsConventionECS)
+	}
+}
+
+// PrometheusTranslationStrategy names how OTLP names are rendered for
+// Prometheus. The values are the ones the OpenTelemetry Collector's Prometheus
+// exporter accepts, less UnderscoreEscapingWithoutSuffixes, which Prometheus
+// does not support directly.
+type PrometheusTranslationStrategy string
+
+const (
+	// UnderscoreEscaping replaces discouraged characters with `_` and appends
+	// the type and unit suffixes, as the specification recommends.
+	UnderscoreEscaping PrometheusTranslationStrategy = "UnderscoreEscapingWithSuffixes"
+	// NoUTF8Escaping keeps the OTLP names, but still appends the suffixes.
+	NoUTF8Escaping PrometheusTranslationStrategy = "NoUTF8EscapingWithSuffixes"
+	// NoTranslation passes names through untouched, suffixes included.
+	NoTranslation PrometheusTranslationStrategy = "NoTranslation"
+)
+
+func (s *PrometheusTranslationStrategy) UnmarshalText(text []byte) error {
+	switch value := PrometheusTranslationStrategy(text); value {
+	case "", UnderscoreEscaping, NoUTF8Escaping, NoTranslation:
+		*s = value
+		return nil
+	default:
+		return fmt.Errorf("unsupported Prometheus translation strategy %q, want %q, %q or %q",
+			value, UnderscoreEscaping, NoUTF8Escaping, NoTranslation)
+	}
 }
 
 type ProxyPolicyConfig struct {

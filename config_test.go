@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net/netip"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // configFixture pairs a configuration file under `fixtures` with the values it
@@ -239,4 +242,55 @@ func TestConvertProxyPolicyConfig(t *testing.T) {
 	if len(policy.AllowedCIDRs) != 0 || len(policy.AllowedHosts) != 0 {
 		t.Errorf("disabled policy = %+v, want empty", policy)
 	}
+}
+
+// TestEnumeratedMetricsKeys checks the keys whose accepted values config.go
+// declares as types: that a good value decodes, that a bad one is refused
+// while parsing rather than later, and that every accepted value resolves.
+func TestEnumeratedMetricsKeys(t *testing.T) {
+	conventions := []MetricsConvention{MetricsConventionDefault, MetricsConventionECS}
+	strategies := []PrometheusTranslationStrategy{UnderscoreEscaping, NoUTF8Escaping, NoTranslation}
+
+	for _, convention := range conventions {
+		var config Config
+		toml := fmt.Sprintf("[metrics]\nconvention = %q\n", convention)
+		if err := unmarshalConfig(toml, &config); err != nil {
+			t.Errorf("convention %q: %v", convention, err)
+		} else if config.Metrics.Convention != convention {
+			t.Errorf("convention decoded as %q, want %q", config.Metrics.Convention, convention)
+		}
+	}
+	for _, strategy := range strategies {
+		var config Config
+		toml := fmt.Sprintf("[metrics.prometheus]\ntranslation-strategy = %q\n", strategy)
+		if err := unmarshalConfig(toml, &config); err != nil {
+			t.Errorf("strategy %q: %v", strategy, err)
+		}
+	}
+
+	// A bad value fails while the file is being read, so the error can name it.
+	var config Config
+	if err := unmarshalConfig("[metrics]\nconvention = \"nonsense\"\n", &config); err == nil {
+		t.Error("an unknown convention should be refused while parsing")
+	}
+	// Prometheus does not support this one, so it is not among the accepted values.
+	if err := unmarshalConfig("[metrics.prometheus]\ntranslation-strategy = \"UnderscoreEscapingWithoutSuffixes\"\n", &config); err == nil {
+		t.Error("UnderscoreEscapingWithoutSuffixes should be refused while parsing")
+	}
+
+	// Every accepted value must resolve, or the type and the resolver drifted.
+	for _, convention := range conventions {
+		if _, err := conventionAttributeNames(convention); err != nil {
+			t.Errorf("convention %q is accepted but does not resolve: %v", convention, err)
+		}
+	}
+	for _, strategy := range strategies {
+		if _, err := prometheusTranslationStrategy(strategy); err != nil {
+			t.Errorf("strategy %q is accepted but does not resolve: %v", strategy, err)
+		}
+	}
+}
+
+func unmarshalConfig(text string, config *Config) error {
+	return toml.Unmarshal([]byte(text), config)
 }

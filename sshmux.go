@@ -337,7 +337,7 @@ auth_requests:
 				upstream.Address = net.JoinHostPort(upstreamResp.Host, strconv.Itoa(int(upstreamResp.Port)))
 				// Report the backend the API picked, not the PROXY protocol
 				// hop that the address below may be rewritten to.
-				info.Upstream = upstream.Address
+				info.UpstreamHost, info.UpstreamPort = upstreamResp.Host, upstreamResp.Port
 				if resp.Proxy != nil {
 					proxyConfig := *resp.Proxy
 					// parse protocol version
