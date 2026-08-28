@@ -516,7 +516,7 @@ func (s *Server) Start() error {
 	// set up TCP listener
 	listener, err := reuse.Listen("tcp", s.Address)
 	if err != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 		s.Metrics.Shutdown(shutdownCtx)
 		cancel()
 		return err
@@ -586,7 +586,7 @@ func (s *Server) Shutdown() {
 	}
 	s.wg.Wait()
 	// flush the final measurements once no handler can record anymore
-	ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
 	s.Metrics.Shutdown(ctx)
 }

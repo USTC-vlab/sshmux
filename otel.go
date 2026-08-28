@@ -1,0 +1,247 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"runtime/debug"
+	"strings"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+)
+
+// Plumbing shared by the OpenTelemetry signals: the attribute names a
+// convention resolves to, an OTLP exporter's settings, and the resource that
+// identifies this process.
+
+const (
+	defaultServiceName  = "sshmux"
+	otelScopeName       = "github.com/USTC-vlab/sshmux"
+	otelShutdownTimeout = 5 * time.Second
+	// unknownAttributeValue is recorded for a grouping attribute whose value is
+	// not known, e.g. the username of a connection that failed before auth.
+	unknownAttributeValue = "unknown"
+)
+
+const (
+	envOTLPProtocol        = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envOTLPMetricsProtocol = "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
+	envOTLPTracesProtocol  = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
+)
+
+// attributeNames is the set of attribute keys one convention resolves to.
+// Only the names differ between conventions; the values never do.
+// connectionInfo is the per-connection state the metrics and the spans are
+// recorded from.
+// Fields are zero until they become known: Username is only set once the client
+// has sent its first auth request, and the upstream only once the auth API has
+// answered.
+type connectionInfo struct {
+	Username string
+	// UpstreamHost and UpstreamPort are the backend the auth API returned,
+	// before any PROXY protocol override.
+	UpstreamHost string
+	UpstreamPort uint16
+	// Established records whether the handshake completed.
+	Established bool
+}
+
+type attributeNames struct {
+	eventOutcome     attribute.Key
+	errorType        attribute.Key
+	userName         attribute.Key
+	serverAddress    attribute.Key
+	serverPort       attribute.Key
+	sshmuxAuthMethod attribute.Key
+	sshmuxAuthStatus attribute.Key
+}
+
+// defaultAttributeNames resolves each attribute against the OpenTelemetry
+// semantic conventions first, then the Elastic Common Schema, then sshmux's
+// own namespace, and follows the conventions wherever they move.
+var defaultAttributeNames = attributeNames{
+	errorType:        attribute.Key("error.type"),     // semconv
+	userName:         attribute.Key("user.name"),      // semconv
+	serverAddress:    attribute.Key("server.address"), // semconv
+	serverPort:       attribute.Key("server.port"),    // semconv
+	eventOutcome:     attribute.Key("event.outcome"),  // ECS; semconv has no equivalent
+	sshmuxAuthMethod: attribute.Key("sshmux.auth.method"),
+	sshmuxAuthStatus: attribute.Key("sshmux.auth.status"),
+}
+
+// ecsAttributeNames resolves against the Elastic Common Schema only, which does
+// not move when the semantic conventions do.
+//
+// It currently names every attribute identically to defaultAttributeNames,
+// because the conventions adopted these fields from ECS. The two are kept
+// apart so that they can diverge without the configuration changing shape.
+var ecsAttributeNames = attributeNames{
+	errorType:        attribute.Key("error.type"),
+	userName:         attribute.Key("user.name"),
+	serverAddress:    attribute.Key("server.address"),
+	serverPort:       attribute.Key("server.port"),
+	eventOutcome:     attribute.Key("event.outcome"),
+	sshmuxAuthMethod: attribute.Key("sshmux.auth.method"),
+	sshmuxAuthStatus: attribute.Key("sshmux.auth.status"),
+}
+
+// conventionAttributeNames resolves the configured convention.
+func conventionAttributeNames(convention AttributeConvention) (attributeNames, error) {
+	switch convention {
+	case "", AttributeConventionDefault:
+		return defaultAttributeNames, nil
+	case AttributeConventionECS:
+		return ecsAttributeNames, nil
+	default:
+		// Unreachable: validateMetricsConfig accepts only the names above.
+		return attributeNames{}, fmt.Errorf("unsupported convention: %s", convention)
+	}
+}
+
+func (n attributeNames) success() attribute.KeyValue { return n.eventOutcome.String("success") }
+func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.String("failure") }
+
+func otelResource(serviceName string, configured []ResourceAttributeConfig) (*resource.Resource, error) {
+	// resource.Default reads OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES.
+	base := resource.Default()
+	attrs, err := otelResourceAttributes(serviceName, configured, base)
+	if err != nil {
+		return nil, err
+	}
+	// The base resource and our attributes share the same semantic convention
+	// schema, so the merge below never conflicts. Attributes from the second
+	// resource win, which is why only the ones the environment did not already
+	// provide are added.
+	res, err := resource.Merge(base, resource.NewWithAttributes(semconv.SchemaURL, attrs...))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build resource: %w", err)
+	}
+	return res, nil
+}
+
+// otelResourceAttributes returns the resource attributes to layer on top of
+// base, honouring the config file over the environment over sshmux's defaults.
+func otelResourceAttributes(serviceName string, configured []ResourceAttributeConfig, base *resource.Resource) ([]attribute.KeyValue, error) {
+	var attrs []attribute.KeyValue
+	// resource.Default only reports an `unknown_service:...` name when neither
+	// OTEL_SERVICE_NAME nor OTEL_RESOURCE_ATTRIBUTES supplied one.
+	if serviceName != "" {
+		attrs = append(attrs, semconv.ServiceName(serviceName))
+	} else if name, ok := resourceAttribute(base, semconv.ServiceNameKey); !ok || strings.HasPrefix(name, "unknown_service") {
+		attrs = append(attrs, semconv.ServiceName(defaultServiceName))
+	}
+	if _, ok := resourceAttribute(base, semconv.ServiceVersionKey); !ok {
+		attrs = append(attrs, semconv.ServiceVersion(buildVersion()))
+	}
+	if _, ok := resourceAttribute(base, semconv.HostNameKey); !ok {
+		if hostname, err := os.Hostname(); err == nil && hostname != "" {
+			attrs = append(attrs, semconv.HostName(hostname))
+		}
+	}
+	for _, attr := range configured {
+		if attr.Name == "" {
+			return nil, errors.New("resource attributes must have a name")
+		}
+		attrs = append(attrs, attribute.String(attr.Name, attr.Value))
+	}
+	return attrs, nil
+}
+
+func resourceAttribute(res *resource.Resource, key attribute.Key) (string, bool) {
+	if res == nil {
+		return "", false
+	}
+	for _, attr := range res.Attributes() {
+		if attr.Key == key {
+			return attr.Value.AsString(), true
+		}
+	}
+	return "", false
+}
+
+// otlpProtocol resolves the OTLP transport, honouring the config file over
+// OTEL_EXPORTER_OTLP_METRICS_PROTOCOL over OTEL_EXPORTER_OTLP_PROTOCOL. Unlike
+// the endpoint and the headers, the protocol selects which exporter package is
+// used, so it cannot be delegated to the exporter itself.
+func otlpProtocol(configured string, signalEnv string) (string, error) {
+	protocol := configured
+	for _, key := range []string{signalEnv, envOTLPProtocol} {
+		if protocol != "" {
+			break
+		}
+		protocol = strings.TrimSpace(os.Getenv(key))
+	}
+	switch protocol {
+	case "", "http", "http/protobuf":
+		return "http/protobuf", nil
+	case "grpc":
+		return "grpc", nil
+	default:
+		return "", fmt.Errorf("unsupported OTLP protocol: %s", protocol)
+	}
+}
+
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" {
+		return "unknown"
+	}
+	return info.Main.Version
+}
+
+// otlpEndpoint parses a configured endpoint. A nil result means none was set,
+// so the exporter falls back to OTEL_EXPORTER_OTLP_[SIGNAL_]ENDPOINT and in
+// turn to the OTLP defaults.
+func otlpEndpoint(config OTLPConfig, protocol string) (*url.URL, error) {
+	if config.Endpoint == "" {
+		return nil, nil
+	}
+	endpoint, err := url.Parse(config.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse OTLP endpoint: %w", err)
+	}
+	switch endpoint.Scheme {
+	case "http", "https":
+	default:
+		return nil, fmt.Errorf("unsupported OTLP endpoint scheme: %s", endpoint.Scheme)
+	}
+	if protocol == "grpc" && strings.Trim(endpoint.Path, "/") != "" {
+		return nil, fmt.Errorf("gRPC OTLP endpoint must not have a path: %s", config.Endpoint)
+	}
+	return endpoint, nil
+}
+
+func otlpHeaders(config OTLPConfig) map[string]string {
+	headers := make(map[string]string, len(config.Headers))
+	for _, header := range config.Headers {
+		headers[header.Name] = header.Value
+	}
+	return headers
+}
+
+// otlpTimeout reports the configured export timeout, and whether one was set:
+// leaving it unset defers to OTEL_EXPORTER_OTLP_[SIGNAL_]TIMEOUT.
+func otlpTimeout(config OTLPConfig) (time.Duration, bool) {
+	if config.TimeoutSeconds == 0 {
+		return 0, false
+	}
+	return time.Duration(config.TimeoutSeconds) * time.Second, true
+}
+
+func boolOrDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func valueOrDefault(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}

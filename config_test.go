@@ -248,7 +248,7 @@ func TestConvertProxyPolicyConfig(t *testing.T) {
 // declares as types: that a good value decodes, that a bad one is refused
 // while parsing rather than later, and that every accepted value resolves.
 func TestEnumeratedMetricsKeys(t *testing.T) {
-	conventions := []MetricsConvention{MetricsConventionDefault, MetricsConventionECS}
+	conventions := []AttributeConvention{AttributeConventionDefault, AttributeConventionECS}
 	strategies := []PrometheusTranslationStrategy{UnderscoreEscaping, NoUTF8Escaping, NoTranslation}
 
 	for _, convention := range conventions {

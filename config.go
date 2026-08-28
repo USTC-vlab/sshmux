@@ -54,22 +54,22 @@ type RecoveryConfig struct {
 }
 
 type MetricsConfig struct {
-	Enabled            bool                     `toml:"enabled"`
-	Convention         MetricsConvention        `toml:"convention,omitempty"`
-	ServiceName        string                   `toml:"service-name,omitempty"`
-	Attributes         []MetricsAttributeConfig `toml:"attributes,omitempty"`
-	IntervalSeconds    uint                     `toml:"interval-seconds,omitempty"`
-	ConnectionGrouping *bool                    `toml:"connection-grouping,omitempty"`
-	OTLP               MetricsOTLPConfig        `toml:"otlp"`
-	Prometheus         MetricsPrometheusConfig  `toml:"prometheus"`
+	Enabled            bool                      `toml:"enabled"`
+	Convention         AttributeConvention       `toml:"convention,omitempty"`
+	ServiceName        string                    `toml:"service-name,omitempty"`
+	Attributes         []ResourceAttributeConfig `toml:"attributes,omitempty"`
+	IntervalSeconds    uint                      `toml:"interval-seconds,omitempty"`
+	ConnectionGrouping *bool                     `toml:"connection-grouping,omitempty"`
+	OTLP               OTLPConfig                `toml:"otlp"`
+	Prometheus         MetricsPrometheusConfig   `toml:"prometheus"`
 }
 
-type MetricsAttributeConfig struct {
+type ResourceAttributeConfig struct {
 	Name  string `toml:"name"`
 	Value string `toml:"value"`
 }
 
-type MetricsOTLPConfig struct {
+type OTLPConfig struct {
 	Enabled        bool               `toml:"enabled"`
 	Protocol       string             `toml:"protocol,omitempty"`
 	Endpoint       string             `toml:"endpoint"`
@@ -112,27 +112,28 @@ type LegacyConfig struct {
 	InvalidUsernameMessage string   `json:"invalid-username-message"`
 }
 
-// MetricsConvention names the schema the metric attributes follow.
-type MetricsConvention string
+// AttributeConvention names the schema the data point and span attributes
+// follow. It does not affect the resource attributes.
+type AttributeConvention string
 
 const (
-	// MetricsConventionDefault resolves each attribute against the
+	// AttributeConventionDefault resolves each attribute against the
 	// OpenTelemetry semantic conventions, then the Elastic Common Schema, then
 	// sshmux's own namespace, and follows the conventions wherever they move.
-	MetricsConventionDefault MetricsConvention = "default"
-	// MetricsConventionECS resolves against the Elastic Common Schema only,
+	AttributeConventionDefault AttributeConvention = "default"
+	// AttributeConventionECS resolves against the Elastic Common Schema only,
 	// which does not move.
-	MetricsConventionECS MetricsConvention = "ecs"
+	AttributeConventionECS AttributeConvention = "ecs"
 )
 
-func (c *MetricsConvention) UnmarshalText(text []byte) error {
-	switch value := MetricsConvention(text); value {
-	case "", MetricsConventionDefault, MetricsConventionECS:
+func (c *AttributeConvention) UnmarshalText(text []byte) error {
+	switch value := AttributeConvention(text); value {
+	case "", AttributeConventionDefault, AttributeConventionECS:
 		*c = value
 		return nil
 	default:
 		return fmt.Errorf("unsupported metrics convention %q, want %q or %q",
-			value, MetricsConventionDefault, MetricsConventionECS)
+			value, AttributeConventionDefault, AttributeConventionECS)
 	}
 }
 
