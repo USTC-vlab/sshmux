@@ -324,7 +324,7 @@ func serveDownstreamProxy(listener net.Listener) {
 
 // startServer starts sshmux from a fixture and records the address it listens
 // on.
-func startServer(t *testing.T, configFile string) *Server {
+func startServer(t *testing.T, configFile string, adjust ...func(*Config)) *Server {
 	t.Helper()
 	config, err := loadConfig(filepath.Join("fixtures", configFile))
 	if err != nil {
@@ -340,6 +340,9 @@ func startServer(t *testing.T, configFile string) *Server {
 	}
 	endpoint.Host = apiServerAddr.String()
 	config.Auth.Endpoint = endpoint.String()
+	for _, adjust := range adjust {
+		adjust(&config)
+	}
 
 	sshmux, err := makeServer(config)
 	if err != nil {
@@ -685,5 +688,105 @@ func TestSSHPartialAuthChallengeClientConnection(t *testing.T) {
 	t.Run("proxied both ways", func(t *testing.T) {
 		requireProxySource(t)
 		testWithGolangSSHPartialAuthClient(t, sshmuxProxyAddr, true)
+	})
+}
+
+// startMetricsServer starts sshmux with the metrics fixture, adjusted to the
+// addresses this run actually uses and to the exporter these tests read from.
+func startMetricsServer(t *testing.T) *Server {
+	t.Helper()
+	return startServer(t, "metrics.toml", func(config *Config) {
+		// The fixture exercises the configuration surface, not these tests: it
+		// names an OTLP collector that is not listening, a fixed Prometheus
+		// port, and turns off the connection grouping the assertions read.
+		config.Metrics.OTLP.Enabled = false
+		config.Metrics.Prometheus.Address = "127.0.0.1:0"
+		config.Metrics.ConnectionGrouping = nil
+	})
+}
+
+// dropConnection connects to address and hangs up without saying anything.
+func dropConnection(t *testing.T, address *net.TCPAddr) {
+	t.Helper()
+	conn, err := net.Dial("tcp", address.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+}
+
+// scrapeUntil polls the Prometheus endpoint until want shows up, since a
+// session is only recorded once its handler winds down.
+func scrapeUntil(t *testing.T, metrics *Metrics, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var body string
+	for time.Now().Before(deadline) {
+		body = scrape(t, metrics)
+		if strings.Contains(body, want) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return body
+}
+
+// testSessionMetrics checks that a connection that went away before the SSH
+// handshake is still accounted for as an accepted and then failed session.
+func testSessionMetrics(t *testing.T, metrics *Metrics) {
+	t.Helper()
+	body := scrapeUntil(t, metrics, "sshmux_sessions_total{")
+	for _, want := range []string{
+		`sshmux_connections_total 1`,
+		`sshmux_connections_active 0`,
+		`sshmux_sessions_total{`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scrape output does not contain %q:\n%s", want, body)
+		}
+	}
+}
+
+// testUpstreamMetrics checks that the backend address the auth API returned
+// reaches the metrics.
+func testUpstreamMetrics(t *testing.T, metrics *Metrics) {
+	t.Helper()
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`sshmux_sessions_total{event_outcome="success",server_address=%q,server_port="%d",user_name=%q} 1`,
+		sshdServerAddr.IP.String(), sshdServerAddr.Port, currentUser.Username)
+	if body := scrapeUntil(t, metrics, want); !strings.Contains(body, want) {
+		t.Errorf("scrape output does not contain %q:\n%s", want, body)
+	}
+}
+
+// TestServerMetricsWiring checks that a connection served by the real server
+// shows up in the exported metrics, i.e. that the instruments are wired into
+// the connection handler and not just reachable in isolation.
+func TestServerMetricsWiring(t *testing.T) {
+	initEnv(t)
+
+	sshmux := startMetricsServer(t)
+	defer sshmux.Shutdown()
+
+	t.Run("dropped connection", func(t *testing.T) {
+		dropConnection(t, sshmuxServerAddr)
+		testSessionMetrics(t, sshmux.Metrics)
+	})
+}
+
+// TestServerMetricsUpstreamGrouping drives a real SSH client through sshmux and
+// checks that the backend address the auth API returned reaches the metrics.
+func TestServerMetricsUpstreamGrouping(t *testing.T) {
+	initEnv(t)
+
+	sshmux := startMetricsServer(t)
+	defer sshmux.Shutdown()
+
+	t.Run("sshmux", func(t *testing.T) {
+		testWithSSHClient(t, sshmuxServerAddr, false)
+		testUpstreamMetrics(t, sshmux.Metrics)
 	})
 }

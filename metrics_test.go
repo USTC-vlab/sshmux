@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
-	"os/user"
 	"strings"
 	"testing"
 	"time"
@@ -258,55 +256,6 @@ func TestErrorType(t *testing.T) {
 	for _, tc := range cases {
 		if got := errorType(tc.err); got != tc.want {
 			t.Errorf("errorType(%v) = %q, want %q", tc.err, got, tc.want)
-		}
-	}
-}
-
-// TestServerMetricsWiring checks that a connection served by the real server
-// shows up in the exported metrics, i.e. that the instruments are wired into
-// the connection handler and not just reachable in isolation.
-func TestServerMetricsWiring(t *testing.T) {
-	sshmux, err := makeServer(Config{
-		Address: "127.0.0.1:0",
-		SSH:     SSHConfig{HostKeys: []SSHKeyConfig{{Path: "fixtures/ssh_host_ed25519_key"}}},
-		Auth:    AuthConfig{Endpoint: "http://127.0.0.1:5000", Version: "v1"},
-		Metrics: MetricsConfig{
-			Enabled:    true,
-			Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sshmux.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer sshmux.Shutdown()
-
-	// A connection that goes away before the SSH handshake completes still has
-	// to be accounted for as an accepted and then failed session.
-	conn, err := net.Dial("tcp", sshmux.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
-
-	deadline := time.Now().Add(5 * time.Second)
-	var body string
-	for time.Now().Before(deadline) {
-		body = scrape(t, sshmux.Metrics)
-		if strings.Contains(body, "sshmux_sessions_total{") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	for _, want := range []string{
-		`sshmux_connections_total 1`,
-		`sshmux_connections_active 0`,
-		`sshmux_sessions_total{`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("scrape output does not contain %q:\n%s", want, body)
 		}
 	}
 }
@@ -585,67 +534,6 @@ func findAttribute(attrs []attribute.KeyValue, key attribute.Key) (string, bool)
 		}
 	}
 	return "", false
-}
-
-// TestServerMetricsUpstreamGrouping drives a real SSH client through sshmux and
-// checks that the backend address the auth API returned reaches the metrics.
-func TestServerMetricsUpstreamGrouping(t *testing.T) {
-	if _, err := exec.LookPath("sshd"); err != nil {
-		t.Skip("sshd is not available")
-	}
-	initEnv(t)
-	enableProxy = false
-
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sshmux, err := makeServer(Config{
-		Address: "127.0.0.1:0",
-		SSH:     SSHConfig{HostKeys: []SSHKeyConfig{{Path: "fixtures/ssh_host_ed25519_key"}}},
-		Auth:    AuthConfig{Endpoint: "http://" + apiServerAddr.String(), Version: "v1"},
-		Metrics: MetricsConfig{
-			Enabled:    true,
-			Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sshmux.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer sshmux.Shutdown()
-
-	sshd := onetimeSSHDServer(t)
-	defer stopSSHD(t, sshd)
-	address := sshmux.Addr().(*net.TCPAddr)
-	sshCommand := exec.Command(
-		"ssh", "-p", fmt.Sprint(address.Port),
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "ControlMaster=no",
-		"-i", "fixtures/ssh_id_rsa",
-		"-o", "IdentityAgent=no",
-		address.IP.String(), "uname")
-	sshCommand.Dir, _ = os.Getwd()
-	if err := sshCommand.Run(); err != nil {
-		t.Fatal("ssh: ", err)
-	}
-
-	// The session is recorded once its handler winds down, shortly after the
-	// client exits.
-	want := fmt.Sprintf(`sshmux_sessions_total{event_outcome="success",server_address=%q,server_port="%d",user_name=%q} 1`,
-		sshdServerAddr.IP.String(), sshdServerAddr.Port, currentUser.Username)
-	deadline := time.Now().Add(5 * time.Second)
-	var body string
-	for time.Now().Before(deadline) {
-		body = scrape(t, sshmux.Metrics)
-		if strings.Contains(body, want) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Errorf("scrape output does not contain %q:\n%s", want, body)
 }
 
 // countSeries counts the exported sshmux_sessions_total series.
