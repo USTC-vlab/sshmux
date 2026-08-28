@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -20,17 +21,31 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-var sshmuxProxyAddr *net.TCPAddr = localhostTCPAddr(8122)
-var sshmuxServerAddr *net.TCPAddr = localhostTCPAddr(8022)
-var sshdProxiedAddr *net.TCPAddr = localhostTCPAddr(2332)
-var sshdServerAddr *net.TCPAddr = localhostTCPAddr(2333)
-var apiServerAddr *net.TCPAddr = localhostTCPAddr(5000)
+// The addresses of the services making up the test environment. None of them
+// is known before the service is bound: every port is picked by the kernel, so
+// that concurrent packages and back-to-back runs cannot collide.
+var (
+	// the auth API sshmux asks about every connection
+	apiServerAddr *net.TCPAddr
+	// sshmux itself, restarted for each configuration under test
+	sshmuxServerAddr *net.TCPAddr
+	// a PROXY protocol server in front of sshmux, standing in for a load balancer
+	sshmuxProxyAddr *net.TCPAddr
+	// the sshd the auth API hands out, restarted for each connection test
+	sshdServerAddr *net.TCPAddr
+	// a PROXY protocol server in front of sshd, for proxied upstreams
+	sshdProxiedAddr *net.TCPAddr
+)
 
-func localhostTCPAddr(port int) *net.TCPAddr {
-	return &net.TCPAddr{
-		IP:   net.IPv4(127, 0, 0, 1),
-		Port: port,
+// listenLocalhost binds a loopback port chosen by the kernel. Callers read the
+// address it landed on back off the listener.
+func listenLocalhost(t *testing.T) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen: ", err)
 	}
+	return listener
 }
 
 var enableProxy bool
@@ -62,7 +77,8 @@ func checkClientInfo(request AuthRequest) string {
 	return ""
 }
 
-func initHttp(sshPrivateKey []byte) {
+// serveAPI answers auth requests on listener until it fails.
+func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 	sshAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -195,16 +211,14 @@ func initHttp(sshPrivateKey []byte) {
 	router.POST("/ssh", sshAPIHandler)
 	router.POST("/v1/auth/:name", authAPIHandler)
 
-	if err := http.ListenAndServe(apiServerAddr.String(), router); err != nil {
+	if err := http.Serve(listener, router); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func initUpstreamProxyServer() {
-	listener, err := net.ListenTCP("tcp", sshmuxProxyAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
+// serveUpstreamProxy forwards connections on listener to sshmux, prefixed
+// with a PROXY header naming their origin.
+func serveUpstreamProxy(listener net.Listener) {
 	defer listener.Close()
 
 	localAddr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 22)}
@@ -240,11 +254,9 @@ func initUpstreamProxyServer() {
 	}
 }
 
-func initDownstreamProxyServer() {
-	listener, err := net.ListenTCP("tcp", sshdProxiedAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
+// serveDownstreamProxy forwards connections on listener to sshd, requiring a
+// PROXY header from sshmux.
+func serveDownstreamProxy(listener net.Listener) {
 	// Enforce listener to accept PROXY protocol
 	proxyListener := &proxyproto.Listener{
 		Listener: listener,
@@ -279,6 +291,36 @@ func initDownstreamProxyServer() {
 	}
 }
 
+// startServer starts sshmux from a fixture and records the address it listens
+// on.
+func startServer(t *testing.T, configFile string) *Server {
+	t.Helper()
+	config, err := loadConfig(filepath.Join("fixtures", configFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The ports in the fixtures are there to read as realistic examples; the
+	// server belongs on the ones this run actually uses.
+	config.Address = "127.0.0.1:0"
+	endpoint, err := url.Parse(config.Auth.Endpoint)
+	if err != nil {
+		t.Fatal("parse auth endpoint: ", err)
+	}
+	endpoint.Host = apiServerAddr.String()
+	config.Auth.Endpoint = endpoint.String()
+
+	sshmux, err := makeServer(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sshmux.Start(); err != nil {
+		t.Fatal(err)
+	}
+	sshmuxServerAddr = sshmux.Addr().(*net.TCPAddr)
+	return sshmux
+}
+
 func initEnv(t *testing.T) {
 	if inited {
 		return
@@ -301,10 +343,21 @@ func initEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Setup API Server
-	go initHttp(privateKey)
-	go initUpstreamProxyServer()
-	go initDownstreamProxyServer()
+	// Bind each service before starting it, so that the address it landed on
+	// is known by the time the tests, the fixtures and the other services are
+	// pointed at it.
+	apiListener := listenLocalhost(t)
+	apiServerAddr = apiListener.Addr().(*net.TCPAddr)
+	go serveAPI(apiListener, privateKey)
+
+	upstreamProxyListener := listenLocalhost(t)
+	sshmuxProxyAddr = upstreamProxyListener.Addr().(*net.TCPAddr)
+	go serveUpstreamProxy(upstreamProxyListener)
+
+	downstreamProxyListener := listenLocalhost(t)
+	sshdProxiedAddr = downstreamProxyListener.Addr().(*net.TCPAddr)
+	go serveDownstreamProxy(downstreamProxyListener)
+
 	inited = true
 }
 
@@ -319,11 +372,10 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.ListenTCP("tcp", localhostTCPAddr(0))
-	if err != nil {
-		t.Fatal("allocate sshd port: ", err)
-	}
-	sshdServerAddr.Port = listener.Addr().(*net.TCPAddr).Port
+	// sshd binds the port itself, so hold one only long enough to learn a
+	// number nothing else on the machine is using.
+	listener := listenLocalhost(t)
+	sshdServerAddr = listener.Addr().(*net.TCPAddr)
 	if err := listener.Close(); err != nil {
 		t.Fatal("release sshd port: ", err)
 	}
@@ -369,10 +421,9 @@ func stopSSHD(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
-	enableProxy = proxy
-	cmd := onetimeSSHDServer(t)
-	defer stopSSHD(t, cmd)
+// runSSHClient runs a command over the system ssh client against address.
+func runSSHClient(t *testing.T, address *net.TCPAddr, description string) {
+	t.Helper()
 	sshCommand := exec.Command(
 		"ssh", "-p", fmt.Sprint(address.Port),
 		"-o", "StrictHostKeyChecking=no",
@@ -384,6 +435,24 @@ func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, p
 	if err := sshCommand.Run(); err != nil {
 		t.Fatal(fmt.Sprintf("%s: ", description), err)
 	}
+}
+
+// sanityCheckSSHD talks to a throwaway sshd directly, so that a broken
+// environment can be told apart from a broken sshmux.
+func sanityCheckSSHD(t *testing.T) {
+	t.Helper()
+	enableProxy = false
+	cmd := onetimeSSHDServer(t)
+	defer stopSSHD(t, cmd)
+	runSSHClient(t, sshdServerAddr, "sanity check")
+}
+
+func testWithSSHClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
+	t.Helper()
+	enableProxy = proxy
+	cmd := onetimeSSHDServer(t)
+	defer stopSSHD(t, cmd)
+	runSSHClient(t, address, description)
 }
 
 func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, description string, proxy bool) {
@@ -513,18 +582,10 @@ func TestSSHClientConnection(t *testing.T) {
 
 	for _, configFile := range configFiles {
 		// start sshmux server
-		sshmux, err := sshmuxServer(filepath.Join("fixtures", configFile))
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = sshmux.Start()
-		if err != nil {
-			t.Fatal(err)
-		}
+		sshmux := startServer(t, configFile)
 		defer sshmux.Shutdown()
 
-		// sanity check
-		testWithSSHClient(t, sshdServerAddr, "sanity check", false)
+		sanityCheckSSHD(t)
 
 		// test sshmux
 		testWithSSHClient(t, sshmuxServerAddr, "sshmux", false)
@@ -546,14 +607,7 @@ func TestLegacySSHChallengeClientConnection(t *testing.T) {
 
 	for _, configFile := range configFiles {
 		// start sshmux server
-		sshmux, err := sshmuxServer(filepath.Join("fixtures", configFile))
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = sshmux.Start()
-		if err != nil {
-			t.Fatal(err)
-		}
+		sshmux := startServer(t, configFile)
 		defer sshmux.Shutdown()
 
 		// we can't do sanity check here as default ssh server does not support challenge-response authentication
@@ -576,14 +630,7 @@ func TestSSHPartialAuthChallengeClientConnection(t *testing.T) {
 	initEnv(t)
 
 	// start sshmux server
-	sshmux, err := sshmuxServer(filepath.Join("fixtures", "config.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sshmux.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
+	sshmux := startServer(t, "config.toml")
 	defer sshmux.Shutdown()
 
 	// test sshmux

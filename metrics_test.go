@@ -642,7 +642,7 @@ func TestServerMetricsUpstreamGrouping(t *testing.T) {
 	sshmux, err := makeServer(Config{
 		Address: "127.0.0.1:0",
 		SSH:     SSHConfig{HostKeys: []SSHKeyConfig{{Path: "fixtures/ssh_host_ed25519_key"}}},
-		Auth:    AuthConfig{Endpoint: "http://127.0.0.1:5000", Version: "v1"},
+		Auth:    AuthConfig{Endpoint: "http://" + apiServerAddr.String(), Version: "v1"},
 		Metrics: MetricsConfig{
 			Enabled:    true,
 			Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
