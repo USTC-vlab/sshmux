@@ -1,0 +1,27 @@
+address = "0.0.0.0:8022"
+
+[ssh]
+host-keys = [{ path = "fixtures/ssh_host_ed25519_key" }]
+
+[auth]
+endpoint = "http://127.0.0.1:5000"
+version = "v1"
+
+[tracer]
+enabled = true
+convention = "ecs"
+service-name = "sshmux-fixture"
+attributes = [
+    { name = "deployment.environment.name", value = "staging" },
+]
+sample-ratio = 0.25
+propagation = false
+
+[tracer.otlp]
+enabled = true
+protocol = "grpc"
+endpoint = "http://127.0.0.1:4317"
+timeout-seconds = 5
+headers = [
+    { name = "Authorization", value = "ApiKey 12345678" },
+]

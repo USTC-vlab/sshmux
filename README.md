@@ -96,34 +96,9 @@ Settings left out of the TOML file fall back to the standard OpenTelemetry envir
 
 `OTEL_SDK_DISABLED` and `OTEL_METRICS_EXPORTER` are **not** used: `metrics.enabled` and the two `enabled` keys under it are the only switches that decide what runs.
 
-#### OTLP Settings
+#### Metrics OTLP Settings
 
-OTLP settings configure the OTLP push exporter. They are grouped under `metrics.otlp` in the TOML file.
-
-| Key               | Type           | Description                                                                                                                  | Required                      | Example                     |
-| ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------- |
-| `enabled`         | `bool`         | Whether the OTLP exporter is enabled. Defaults to `false`.                                                                   | No                            | `true`                      |
-| `protocol`        | `string`       | OTLP transport to use, either `"http"` or `"grpc"`. Defaults to `"http"`.                                                    | No                            | `"grpc"`                    |
-| `endpoint`        | `string`       | Endpoint URL of the OTLP collector. Defaults to `https://localhost:4318/v1/metrics` for `http`, and `https://localhost:4317` for `grpc` | No                 | `"http://127.0.0.1:4318/v1/metrics"` |
-| `headers`         | `[]HTTPHeader` | Extra headers (gRPC metadata for `grpc`) to send to the collector, e.g. for authentication.                                  | No                            | See [`etc/config.example.toml`](etc/config.example.toml) |
-| `timeout-seconds` | `uint`         | Timeout for a single export request. Defaults to 10 seconds.                                                                 | No                            | `10`                        |
-
-`"http/protobuf"` is accepted as a synonym for `"http"`, since that is the spelling the OpenTelemetry specification uses for `OTEL_EXPORTER_OTLP_PROTOCOL`. The specification's third value, `"http/json"`, is not supported.
-
-For `http`, `endpoint` is a signal-specific endpoint and is used exactly as written, like `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`; only the generic `OTEL_EXPORTER_OTLP_ENDPOINT` is a base URL that `/v1/metrics` is appended to. Spell the path out: `"http://127.0.0.1:4318"` posts to the collector's root, and a gateway documented as `"https://otlp.example.com/otlp"` has to be configured as `"https://otlp.example.com/otlp/v1/metrics"`.
-
-A `grpc` `endpoint` must not carry a path.
-
-Each key above may be left out and supplied by an environment variable instead:
-
-| Key               | Environment variable                                                 |
-| ----------------- | -------------------------------------------------------------------- |
-| `protocol`        | `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`, `OTEL_EXPORTER_OTLP_PROTOCOL` |
-| `endpoint`        | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| `headers`         | `OTEL_EXPORTER_OTLP_METRICS_HEADERS`, `OTEL_EXPORTER_OTLP_HEADERS`   |
-| `timeout-seconds` | `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT`, `OTEL_EXPORTER_OTLP_TIMEOUT`   |
-
-Where two are listed, the signal-specific one takes precedence. The exporters read further variables that have no equivalent in the TOML file, such as `OTEL_EXPORTER_OTLP_COMPRESSION`, `OTEL_EXPORTER_OTLP_INSECURE` and the `OTEL_EXPORTER_OTLP_CERTIFICATE` family; those are always honoured.
+The OTLP exporter for metrics is configured under `metrics.otlp`, whose keys are described in [OTLP Settings](#otlp-settings). Metrics are exported to the `/v1/metrics` path, and read `OTEL_EXPORTER_OTLP_METRICS_*` for the settings left out of the file.
 
 #### Prometheus Settings
 
@@ -138,6 +113,54 @@ Prometheus settings configure the Prometheus scrape endpoint. They are grouped u
 
 See the [OpenTelemetry Collector's Prometheus exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/prometheusexporter/README.md) for what each translation strategy does.
 
+### Tracer Settings
+
+Tracer settings configure the [OpenTelemetry](https://opentelemetry.io) tracing of `sshmux`. They are grouped under `tracer` in the TOML file.
+
+| Key            | Type                      | Description                                                                                | Required | Example                              |
+| -------------- | ------------------------- | ------------------------------------------------------------------------------------------ | -------- | ------------------------------------ |
+| `enabled`      | `bool`                    | Whether tracing is enabled. Defaults to `false`.                                           | No       | `true`                               |
+| `convention`   | `string`                  | Schema the attributes are named after, `"default"` or `"ecs"`. Defaults to `"default"`. See [Attribute Conventions](#attribute-conventions). | No | `"ecs"` |
+| `service-name` | `string`                  | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                    | No       | `"sshmux-vlab"`                      |
+| `attributes`   | `[]ResourceAttribute`     | Extra resource attributes attached to every span.                                          | No       | `[{ name = "env", value = "prod" }]` |
+| `sample-ratio` | `float`                   | Fraction of traces to record, between 0 and 1. Defaults to recording every trace.          | No       | `0.25`                               |
+| `propagation`  | `bool`                    | Whether auth API requests carry trace context. Defaults to `true`.                         | No       | `false`                              |
+
+Settings left out of the TOML file fall back to the standard OpenTelemetry environment variables, so precedence is configuration file, then environment, then default. Here `service-name` and `attributes` fall back to `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`, and `sample-ratio` to `OTEL_TRACES_SAMPLER` with `OTEL_TRACES_SAMPLER_ARG`.
+
+#### Tracer OTLP Settings
+
+The OTLP exporter for traces is configured under `tracer.otlp`, whose keys are described in [OTLP Settings](#otlp-settings). Spans are exported to the `/v1/traces` path, and read `OTEL_EXPORTER_OTLP_TRACES_*` for the settings left out of the file. Unlike metrics, there is no scrape endpoint: spans are only ever pushed.
+
+### OTLP Settings
+
+OTLP settings configure an OTLP push exporter. They are grouped per signal, under `metrics.otlp` and `tracer.otlp` in the TOML file.
+
+| Key               | Type           | Description                                                                                                                  | Required                      | Example                     |
+| ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------- |
+| `enabled`         | `bool`         | Whether the OTLP exporter is enabled. Defaults to `false`.                                                                   | No                            | `true`                      |
+| `protocol`        | `string`       | OTLP transport to use, either `"http"` or `"grpc"`. Defaults to `"http"`.                                                    | No                            | `"grpc"`                    |
+| `endpoint`        | `string`       | Endpoint URL of the OTLP collector, used exactly as written. Defaults to `https://localhost:4318/v1/<signal>` for `http`, and `https://localhost:4317` for `grpc`. | No | `"http://127.0.0.1:4318/v1/metrics"` |
+| `headers`         | `[]HTTPHeader` | Extra headers (gRPC metadata for `grpc`) to send to the collector, e.g. for authentication.                                  | No                            | See [`etc/config.example.toml`](etc/config.example.toml) |
+| `timeout-seconds` | `uint`         | Timeout for a single export request. Defaults to 10 seconds.                                                                 | No                            | `10`                        |
+
+`"http/protobuf"` is accepted as a synonym for `"http"`, since that is the spelling the OpenTelemetry specification uses for `OTEL_EXPORTER_OTLP_PROTOCOL`. The specification's third value, `"http/json"`, is not supported.
+
+For `http`, `endpoint` is a signal-specific endpoint and is used exactly as written, like `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`; only the generic `OTEL_EXPORTER_OTLP_ENDPOINT` is a base URL that the signal path is appended to. Spell the path out: `"http://127.0.0.1:4318"` posts to the collector's root, and a gateway documented as `"https://otlp.example.com/otlp"` has to be configured as `"https://otlp.example.com/otlp/v1/metrics"`.
+
+A `grpc` `endpoint` must not carry a path.
+
+Each key above may be left out and supplied by an environment variable instead:
+
+| Key               | Environment variable                                                  |
+| ----------------- | --------------------------------------------------------------------- |
+| `protocol`        | `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL`, `OTEL_EXPORTER_OTLP_PROTOCOL` |
+| `endpoint`        | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `headers`         | `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS`, `OTEL_EXPORTER_OTLP_HEADERS`   |
+| `timeout-seconds` | `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT`, `OTEL_EXPORTER_OTLP_TIMEOUT`   |
+
+Where two are listed, the signal-specific one takes precedence. The exporters read further variables that have no equivalent in the TOML file, such as `OTEL_EXPORTER_OTLP_COMPRESSION`, `OTEL_EXPORTER_OTLP_INSECURE` and the `OTEL_EXPORTER_OTLP_CERTIFICATE` family; those are always honoured.
+
 ### PROXY Protocol Settings
 
 PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address) support in `sshmux`. They are grouped under `proxy-protocol` in the TOML file.
@@ -150,7 +173,7 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 
 ## Attribute Conventions
 
-`metrics.convention` selects how each attribute is named:
+`metrics.convention` and `tracer.convention` select how each attribute is named:
 
 | Value | Resolves each attribute against |
 | --- | --- |

@@ -84,12 +84,23 @@ type MetricsPrometheusConfig struct {
 	TranslationStrategy PrometheusTranslationStrategy `toml:"translation-strategy,omitempty"`
 }
 
+type TracerConfig struct {
+	Enabled     bool                      `toml:"enabled"`
+	Convention  AttributeConvention       `toml:"convention,omitempty"`
+	ServiceName string                    `toml:"service-name,omitempty"`
+	Attributes  []ResourceAttributeConfig `toml:"attributes,omitempty"`
+	SampleRatio *float64                  `toml:"sample-ratio,omitempty"`
+	Propagation *bool                     `toml:"propagation,omitempty"`
+	OTLP        OTLPConfig                `toml:"otlp"`
+}
+
 type Config struct {
 	Address       string              `toml:"address"`
 	SSH           SSHConfig           `toml:"ssh"`
 	Auth          AuthConfig          `toml:"auth"`
 	Logger        LoggerConfig        `toml:"logger"`
 	Metrics       MetricsConfig       `toml:"metrics"`
+	Tracer        TracerConfig        `toml:"tracer"`
 	ProxyProtocol ProxyProtocolConfig `toml:"proxy-protocol"`
 	Recovery      RecoveryConfig      `toml:"recovery"`
 }
