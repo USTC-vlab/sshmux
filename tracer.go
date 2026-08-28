@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -23,6 +25,8 @@ type Tracer struct {
 	tracer   trace.Tracer
 	// attrs holds the attribute names the configured convention resolved to.
 	attrs attributeNames
+	// propagator is nil when trace context is not carried to the auth API.
+	propagator propagation.TextMapPropagator
 }
 
 func makeTracer(config TracerConfig) (*Tracer, error) {
@@ -59,7 +63,11 @@ func makeTracer(config TracerConfig) (*Tracer, error) {
 			sdktrace.ParentBased(sdktrace.TraceIDRatioBased(*config.SampleRatio))))
 	}
 	provider := sdktrace.NewTracerProvider(options...)
-	return &Tracer{enabled: true, provider: provider, tracer: provider.Tracer(otelScopeName), attrs: names}, nil
+	tracer := &Tracer{enabled: true, provider: provider, tracer: provider.Tracer(otelScopeName), attrs: names}
+	if boolOrDefault(config.Propagation, true) {
+		tracer.propagator = propagation.TraceContext{}
+	}
+	return tracer, nil
 }
 
 func makeOTLPTraceExporter(config OTLPConfig) (*otlptrace.Exporter, error) {
@@ -103,6 +111,16 @@ func makeOTLPTraceExporter(config OTLPConfig) (*otlptrace.Exporter, error) {
 		options = append(options, otlptracehttp.WithTimeout(timeout))
 	}
 	return otlptracehttp.New(ctx, options...)
+}
+
+// Inject writes the trace context of ctx into an outgoing request's headers,
+// so that the server handling it can continue the same trace. It does nothing
+// while tracing or propagation is off, or while ctx carries no span.
+func (t *Tracer) Inject(ctx context.Context, header http.Header) {
+	if t.propagator == nil {
+		return
+	}
+	t.propagator.Inject(ctx, propagation.HeaderCarrier(header))
 }
 
 // Shutdown flushes pending spans and tears down the exporter.

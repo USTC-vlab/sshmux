@@ -35,6 +35,7 @@ type Server struct {
 	HandshakeTimeout time.Duration
 	UpstreamTimeout  time.Duration
 	Metrics          *Metrics
+	Tracer           *Tracer
 }
 
 const (
@@ -117,12 +118,16 @@ func makeServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	tracer, err := makeTracer(config.Tracer)
+	if err != nil {
+		return nil, err
+	}
 	var authenticator Authenticator
 	if config.Auth.Version == "" || config.Auth.Version == "legacy" {
-		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery)
+		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery, tracer)
 		authenticator = &legacyAuthenticator
 	} else {
-		authenticator, err = makeAuthenticator(config.Auth)
+		authenticator, err = makeAuthenticator(config.Auth, tracer)
 		if err != nil {
 			return nil, err
 		}
@@ -138,6 +143,7 @@ func makeServer(config Config) (*Server, error) {
 		HandshakeTimeout: timeoutFromSeconds(config.SSH.HandshakeTimeoutSeconds, defaultHandshakeTimeout),
 		UpstreamTimeout:  timeoutFromSeconds(config.SSH.UpstreamTimeoutSeconds, defaultUpstreamTimeout),
 		Metrics:          metrics,
+		Tracer:           tracer,
 	}
 	return sshmux, nil
 }
@@ -519,6 +525,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 		s.Metrics.Shutdown(shutdownCtx)
+		s.Tracer.Shutdown(shutdownCtx)
 		cancel()
 		return err
 	}
@@ -590,4 +597,5 @@ func (s *Server) Shutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
 	s.Metrics.Shutdown(ctx)
+	s.Tracer.Shutdown(ctx)
 }

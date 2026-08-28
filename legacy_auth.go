@@ -54,10 +54,11 @@ type LegacyAuthenticator struct {
 	UsernamePolicy UsernamePolicyConfig
 	PasswordPolicy PasswordPolicyConfig
 	Client         *http.Client
+	Tracer         *Tracer
 	Headers        http.Header
 }
 
-func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAuthenticator {
+func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig, tracer *Tracer) LegacyAuthenticator {
 	headers := http.Header{}
 	for _, header := range auth.Headers {
 		headers.Add(header.Name, header.Value)
@@ -76,6 +77,7 @@ func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAut
 		},
 		Client:  &http.Client{Timeout: timeoutFromSeconds(auth.TimeoutSeconds, defaultAuthTimeout)},
 		Headers: headers,
+		Tracer:  tracer,
 	}
 }
 
@@ -170,6 +172,7 @@ func (auth LegacyAuthenticator) AuthUser(ctx context.Context, request any, usern
 	req.Header = auth.Headers.Clone()
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
+	auth.Tracer.Inject(ctx, req.Header)
 	res, err := auth.Client.Do(req)
 	if err != nil {
 		return nil, err

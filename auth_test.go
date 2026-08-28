@@ -28,7 +28,7 @@ func TestAuthenticatorTimeouts(t *testing.T) {
 		Endpoint:       endpoint.String(),
 		Version:        "v1",
 		TimeoutSeconds: 7,
-	})
+	}, noopTracer())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestAuthenticatorTimeouts(t *testing.T) {
 		t.Fatalf("REST auth timeout = %s, want %s", got, 7*time.Second)
 	}
 
-	legacy := makeLegacyAuthenticator(AuthConfig{TimeoutSeconds: 11}, RecoveryConfig{})
+	legacy := makeLegacyAuthenticator(AuthConfig{TimeoutSeconds: 11}, RecoveryConfig{}, noopTracer())
 	if got := legacy.Client.Timeout; got != 11*time.Second {
 		t.Fatalf("legacy auth timeout = %s, want %s", got, 11*time.Second)
 	}

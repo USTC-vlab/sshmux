@@ -64,7 +64,7 @@ type Authenticator interface {
 	Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error)
 }
 
-func makeAuthenticator(auth AuthConfig) (Authenticator, error) {
+func makeAuthenticator(auth AuthConfig, tracer *Tracer) (Authenticator, error) {
 	if auth.Version == "" {
 		auth.Version = "v1"
 	}
@@ -81,6 +81,7 @@ func makeAuthenticator(auth AuthConfig) (Authenticator, error) {
 		Version:  auth.Version,
 		Headers:  headers,
 		Client:   &http.Client{Timeout: timeoutFromSeconds(auth.TimeoutSeconds, defaultAuthTimeout)},
+		Tracer:   tracer,
 	}
 	return &authenticator, nil
 }
@@ -90,6 +91,7 @@ type RESTfulAuthenticator struct {
 	Version  string
 	Headers  http.Header
 	Client   *http.Client
+	Tracer   *Tracer
 }
 
 func (auth *RESTfulAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
@@ -110,6 +112,7 @@ func (auth *RESTfulAuthenticator) Auth(ctx context.Context, request AuthRequest,
 	req.Header = auth.Headers.Clone()
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
+	auth.Tracer.Inject(ctx, req.Header)
 
 	res, err := auth.Client.Do(req)
 	if err != nil {
