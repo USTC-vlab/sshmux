@@ -1,25 +1,33 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/pires/go-proxyproto"
+	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"golang.org/x/crypto/ssh"
+	"google.golang.org/protobuf/proto"
 )
 
 // The addresses of the services making up the test environment. None of them
@@ -789,4 +797,223 @@ func TestServerMetricsUpstreamGrouping(t *testing.T) {
 		testWithSSHClient(t, sshmuxServerAddr, false)
 		testUpstreamMetrics(t, sshmux.Metrics)
 	})
+}
+
+func collectSpans(t *testing.T) (*httptest.Server, func() []*tracev1.Span) {
+	t.Helper()
+	var mu sync.Mutex
+	var spans []*tracev1.Span
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return
+		}
+		var request collectortrace.ExportTraceServiceRequest
+		if err := proto.Unmarshal(body, &request); err != nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, resource := range request.ResourceSpans {
+			for _, scope := range resource.ScopeSpans {
+				spans = append(spans, scope.Spans...)
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, func() []*tracev1.Span {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]*tracev1.Span(nil), spans...)
+	}
+}
+
+// flushSpans exports whatever the batcher is holding, so that the spans of a
+// finished session can be inspected without shutting the server down.
+func flushSpans(t *testing.T, sshmux *Server) {
+	t.Helper()
+	if err := sshmux.Tracer.ForceFlush(t.Context()); err != nil {
+		t.Fatal("flush spans: ", err)
+	}
+}
+
+// testWithHeldSSHClient brings a session up and runs check while the client is
+// still connected, so that what reached the collector mid-session can be told
+// apart from what only arrives once the session closes.
+func testWithHeldSSHClient(t *testing.T, address *net.TCPAddr, check func()) {
+	t.Helper()
+	enableProxy = false
+	cmd := onetimeSSHDServer(t)
+	defer stopSSHD(t, cmd)
+
+	key, err := os.ReadFile("fixtures/ssh_id_rsa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		t.Fatal("parse client key: ", err)
+	}
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := ssh.Dial("tcp", address.String(), &ssh.ClientConfig{
+		User:            currentUser.Username,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal("failed to dial: ", err)
+	}
+	defer client.Close()
+
+	check()
+}
+
+// awaitSpans flushes until want spans have been exported: the server finishes
+// the last of them just after the client sees the session come up.
+func awaitSpans(t *testing.T, sshmux *Server, spans func() []*tracev1.Span, want int) []*tracev1.Span {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var exported []*tracev1.Span
+	for time.Now().Before(deadline) {
+		flushSpans(t, sshmux)
+		if exported = spans(); len(exported) >= want {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return exported
+}
+
+// spanHasAttribute reports whether a span carries key.
+func spanHasAttribute(span *tracev1.Span, key string) bool {
+	for _, attr := range span.Attributes {
+		if attr.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// testSpanTree checks that a session produced the expected spans, and that
+// they nest under one another.
+func testSpanTree(t *testing.T, spans []*tracev1.Span) {
+	t.Helper()
+
+	byName := map[string]*tracev1.Span{}
+	for _, span := range spans {
+		byName[span.Name] = span
+	}
+	for _, want := range []string{"establish ssh session", "ssh handshake", "authenticate user", "connect upstream"} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("no %q span was exported; got %v", want, slices.Sorted(maps.Keys(byName)))
+		}
+	}
+	session, handshake := byName["establish ssh session"], byName["ssh handshake"]
+	if session == nil || handshake == nil {
+		t.Fatal("missing the spans needed to check nesting")
+	}
+	if len(session.ParentSpanId) != 0 {
+		t.Error(`"establish ssh session" has a parent, want it to be the trace root`)
+	}
+	if !bytes.Equal(handshake.ParentSpanId, session.SpanId) {
+		t.Error(`"ssh handshake" is not a child of "establish ssh session"`)
+	}
+	if auth := byName["authenticate user"]; auth != nil && !bytes.Equal(auth.ParentSpanId, handshake.SpanId) {
+		t.Error(`"authenticate user" is not a child of "ssh handshake"`)
+	}
+	// A collector builds its service graph out of the kinds, so the session
+	// sshmux serves and the calls it makes on that session's behalf have to be
+	// told apart.
+	if session.Kind != tracev1.Span_SPAN_KIND_SERVER {
+		t.Errorf("session span kind = %v, want SPAN_KIND_SERVER", session.Kind)
+	}
+	for _, name := range []string{"authenticate user", "connect upstream"} {
+		if span := byName[name]; span != nil && span.Kind != tracev1.Span_SPAN_KIND_CLIENT {
+			t.Errorf("%q span kind = %v, want SPAN_KIND_CLIENT", name, span.Kind)
+		}
+	}
+	// Which addresses a span names follows from its kind: the session is
+	// reached from a client, the auth and dial spans reach out to a server.
+	wantAttributes := map[string][]string{
+		"establish ssh session": {
+			"network.protocol.name", "network.protocol.version",
+			"user.name",
+			"client.address", "client.port",
+			"network.peer.address", "network.peer.port",
+		},
+		"authenticate user": {"server.address", "server.port", "network.peer.address", "network.peer.port"},
+		"connect upstream":  {"server.address", "server.port", "network.peer.address", "network.peer.port"},
+	}
+	for name, keys := range wantAttributes {
+		span := byName[name]
+		if span == nil {
+			continue
+		}
+		for _, key := range keys {
+			if !spanHasAttribute(span, key) {
+				t.Errorf("%q span carries no %q attribute", name, key)
+			}
+		}
+	}
+	if handshake := byName["ssh handshake"]; handshake != nil {
+		// An internal span covers no connection, so it has no peer to name.
+		for _, key := range []string{"network.peer.address", "network.peer.port"} {
+			if spanHasAttribute(handshake, key) {
+				t.Errorf(`"ssh handshake" carries %q, want no peer on an internal span`, key)
+			}
+		}
+	}
+	for name, span := range byName {
+		if !bytes.Equal(span.TraceId, session.TraceId) {
+			t.Errorf("%q is in a different trace from the session", name)
+		}
+	}
+}
+
+func TestServerSpans(t *testing.T) {
+	initEnv(t)
+
+	collector, spans := collectSpans(t)
+	sshmux := startServer(t, "tracer.toml", func(config *Config) {
+		// The fixture exercises the configuration surface, not this test: it
+		// names a gRPC collector, samples a quarter of traces, which would make
+		// the assertions intermittent, and asks for the ECS attribute names,
+		// which spell the application protocol differently.
+		config.Tracer.OTLP.Protocol = "http"
+		config.Tracer.OTLP.Endpoint = collector.URL + "/v1/traces"
+		config.Tracer.SampleRatio = nil
+		config.Tracer.Convention = AttributeConventionDefault
+	})
+	defer sshmux.Shutdown()
+
+	t.Run("sshmux", func(t *testing.T) {
+		testWithHeldSSHClient(t, sshmuxServerAddr, func() {
+			// Every span of the session has to be exported while the client is
+			// still connected: a span left open for the life of a session is
+			// held in memory and never reaches the collector.
+			testSpanTree(t, awaitSpans(t, sshmux, spans, 4))
+		})
+	})
+}
+
+func TestSSHProtocolVersion(t *testing.T) {
+	cases := []struct{ identification, want string }{
+		{"SSH-2.0-OpenSSH_9.9", "2.0"},
+		// The software version is free to carry more dashes, and comments.
+		{"SSH-2.0-Go-1.2 some comment", "2.0"},
+		{"SSH-1.99-OpenSSH_3.9", "1.99"},
+		{"SSH-2.0-", "2.0"},
+		{"", ""},
+		{"SSH-2.0", ""},
+		{"HTTP/1.1-nonsense-here", ""},
+	}
+	for _, tc := range cases {
+		if got := sshProtocolVersion(tc.identification); got != tc.want {
+			t.Errorf("sshProtocolVersion(%q) = %q, want %q", tc.identification, got, tc.want)
+		}
+	}
 }

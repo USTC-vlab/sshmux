@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"runtime/debug"
@@ -36,41 +37,65 @@ const (
 // attributeNames is the set of attribute keys one convention resolves to.
 // Only the names differ between conventions; the values never do.
 // connectionInfo is the per-connection state the metrics and the spans are
-// recorded from.
-// Fields are zero until they become known: Username is only set once the client
-// has sent its first auth request, and the upstream only once the auth API has
-// answered.
+// recorded from. Fields are zero until they become known: Username is only set
+// once the client has sent its first auth request, and the upstream only once
+// the auth API has answered.
 type connectionInfo struct {
 	Username string
 	// UpstreamHost and UpstreamPort are the backend the auth API returned,
 	// before any PROXY protocol override.
 	UpstreamHost string
 	UpstreamPort uint16
+	// ClientHost and ClientPort are the downstream address, as the PROXY
+	// protocol header reports it where there is one, and ClientPeer the address
+	// actually connected from. They are for the spans: grouping metrics by
+	// client would be a series per connection.
+	ClientHost string
+	ClientPort uint16
+	ClientPeer net.Addr
+	// ProtocolVersion is the SSH protocol version the client identified with,
+	// e.g. "2.0" out of "SSH-2.0-OpenSSH_9.9".
+	ProtocolVersion string
 	// Established records whether the handshake completed.
 	Established bool
 }
 
 type attributeNames struct {
-	eventOutcome     attribute.Key
-	errorType        attribute.Key
-	userName         attribute.Key
-	serverAddress    attribute.Key
-	serverPort       attribute.Key
-	sshmuxAuthMethod attribute.Key
-	sshmuxAuthStatus attribute.Key
+	eventOutcome           attribute.Key
+	errorType              attribute.Key
+	userName               attribute.Key
+	clientAddress          attribute.Key
+	clientPort             attribute.Key
+	serverAddress          attribute.Key
+	serverPort             attribute.Key
+	networkProtocolName    attribute.Key
+	networkProtocolVersion attribute.Key
+	// A span's peer is the other end of the network connection it covers, as
+	// against the logical end behind any intermediary. Its kind fixes which
+	// side that is: the client for a server span, the callee for a client span.
+	networkPeerAddress attribute.Key
+	networkPeerPort    attribute.Key
+	sshmuxAuthMethod   attribute.Key
+	sshmuxAuthStatus   attribute.Key
 }
 
 // defaultAttributeNames resolves each attribute against the OpenTelemetry
 // semantic conventions first, then the Elastic Common Schema, then sshmux's
 // own namespace, and follows the conventions wherever they move.
 var defaultAttributeNames = attributeNames{
-	errorType:        attribute.Key("error.type"),     // semconv
-	userName:         attribute.Key("user.name"),      // semconv
-	serverAddress:    attribute.Key("server.address"), // semconv
-	serverPort:       attribute.Key("server.port"),    // semconv
-	eventOutcome:     attribute.Key("event.outcome"),  // ECS; semconv has no equivalent
-	sshmuxAuthMethod: attribute.Key("sshmux.auth.method"),
-	sshmuxAuthStatus: attribute.Key("sshmux.auth.status"),
+	errorType:              attribute.Key("error.type"),               // semconv
+	userName:               attribute.Key("user.name"),                // semconv
+	clientAddress:          attribute.Key("client.address"),           // semconv
+	clientPort:             attribute.Key("client.port"),              // semconv
+	serverAddress:          attribute.Key("server.address"),           // semconv
+	serverPort:             attribute.Key("server.port"),              // semconv
+	networkProtocolName:    attribute.Key("network.protocol.name"),    // semconv
+	networkProtocolVersion: attribute.Key("network.protocol.version"), // semconv
+	networkPeerAddress:     attribute.Key("network.peer.address"),     // semconv
+	networkPeerPort:        attribute.Key("network.peer.port"),        // semconv
+	eventOutcome:           attribute.Key("event.outcome"),            // ECS; semconv has no equivalent
+	sshmuxAuthMethod:       attribute.Key("sshmux.auth.method"),
+	sshmuxAuthStatus:       attribute.Key("sshmux.auth.status"),
 }
 
 // ecsAttributeNames resolves against the Elastic Common Schema only, which does
@@ -80,13 +105,21 @@ var defaultAttributeNames = attributeNames{
 // because the conventions adopted these fields from ECS. The two are kept
 // apart so that they can diverge without the configuration changing shape.
 var ecsAttributeNames = attributeNames{
-	errorType:        attribute.Key("error.type"),
-	userName:         attribute.Key("user.name"),
-	serverAddress:    attribute.Key("server.address"),
-	serverPort:       attribute.Key("server.port"),
-	eventOutcome:     attribute.Key("event.outcome"),
-	sshmuxAuthMethod: attribute.Key("sshmux.auth.method"),
-	sshmuxAuthStatus: attribute.Key("sshmux.auth.status"),
+	errorType:     attribute.Key("error.type"),
+	userName:      attribute.Key("user.name"),
+	clientAddress: attribute.Key("client.address"),
+	clientPort:    attribute.Key("client.port"),
+	serverAddress: attribute.Key("server.address"),
+	serverPort:    attribute.Key("server.port"),
+	// The two attributes the conventions do not share: ECS names the
+	// application protocol without the namespace the semantic conventions put
+	// it in, and has nothing for its version. An empty key drops the attribute.
+	networkProtocolName: attribute.Key("network.protocol"),
+	networkPeerAddress:  attribute.Key("network.peer.address"),
+	networkPeerPort:     attribute.Key("network.peer.port"),
+	eventOutcome:        attribute.Key("event.outcome"),
+	sshmuxAuthMethod:    attribute.Key("sshmux.auth.method"),
+	sshmuxAuthStatus:    attribute.Key("sshmux.auth.status"),
 }
 
 // conventionAttributeNames resolves the configured convention.

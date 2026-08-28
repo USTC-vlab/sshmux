@@ -1,6 +1,8 @@
 package main
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -145,11 +147,24 @@ func TestConventionAttributeNames(t *testing.T) {
 		t.Error(`convention "ecs" did not resolve to the Elastic Common Schema`)
 	}
 
-	// The conventions adopted these fields from ECS, so the two lines name
-	// every attribute identically. This will stop holding when they diverge,
-	// and the test is what will say so.
-	if defaultAttributeNames != ecsAttributeNames {
-		t.Log("the conventions have diverged; the README table needs updating")
+	// The conventions adopted most of these fields from ECS, so they name all
+	// but the application protocol and its version identically. A further
+	// difference needs a row in the README table, and this is what says so.
+	var differing []string
+	defaults, ecs := reflect.ValueOf(defaultAttributeNames), reflect.ValueOf(ecsAttributeNames)
+	for i := range defaults.NumField() {
+		// String, not Interface: the fields are unexported, and every one of
+		// them is an attribute.Key.
+		if defaults.Field(i).String() != ecs.Field(i).String() {
+			differing = append(differing, defaults.Type().Field(i).Name)
+		}
+	}
+	want := []string{"networkProtocolName", "networkProtocolVersion"}
+	if !slices.Equal(differing, want) {
+		t.Errorf("the conventions differ in %v, want %v", differing, want)
+	}
+	if ecsAttributeNames.networkProtocolVersion != "" {
+		t.Error("ECS has no name for the protocol version, want the attribute dropped")
 	}
 
 	if _, err := conventionAttributeNames("nonsense"); err == nil {

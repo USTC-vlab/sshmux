@@ -105,7 +105,7 @@ func (auth *RESTfulAuthenticator) Auth(ctx context.Context, request AuthRequest,
 		return 0, nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", auth_url, payload)
+	req, err := http.NewRequestWithContext(auth.Tracer.tracePeer(ctx), "POST", auth_url, payload)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -137,11 +137,18 @@ func (auth *RESTfulAuthenticator) Auth(ctx context.Context, request AuthRequest,
 type instrumentedAuthenticator struct {
 	inner   Authenticator
 	metrics *Metrics
+	tracer  *Tracer
+	// server is the auth API the wrapped Authenticator calls.
+	server *url.URL
 }
 
 func (a *instrumentedAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
 	start := time.Now()
+	ctx, span := a.tracer.Start(ctx, "authenticate user", spanKindClient)
 	status, response, err := a.inner.Auth(ctx, request, username)
+	endSpan(span, err, append(a.tracer.serverAttributes(a.server),
+		a.tracer.attrs.sshmuxAuthMethod.String(request.Method),
+		a.tracer.attrs.sshmuxAuthStatus.Int(status))...)
 	a.metrics.AuthFinished(ctx, request.Method, status, err, time.Since(start))
 	return status, response, err
 }

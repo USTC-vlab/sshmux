@@ -13,11 +13,13 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	reuse "github.com/libp2p/go-reuseport"
 	"github.com/pires/go-proxyproto"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -122,6 +124,11 @@ func makeServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The auth API is named on the span of every call made to it.
+	authEndpoint, err := url.Parse(config.Auth.Endpoint)
+	if err != nil {
+		return nil, err
+	}
 	var authenticator Authenticator
 	if config.Auth.Version == "" || config.Auth.Version == "legacy" {
 		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery, tracer)
@@ -132,7 +139,7 @@ func makeServer(config Config) (*Server, error) {
 			return nil, err
 		}
 	}
-	authenticator = &instrumentedAuthenticator{inner: authenticator, metrics: metrics}
+	authenticator = &instrumentedAuthenticator{inner: authenticator, metrics: metrics, tracer: tracer, server: authEndpoint}
 	sshmux := &Server{
 		Address:          config.Address,
 		Banner:           config.SSH.Banner,
@@ -175,12 +182,20 @@ func (s *Server) handler(conn net.Conn) {
 	defer conn.Close()
 
 	connectTime := time.Now()
-	ctx := s.ctx
-	s.Metrics.ConnectionAccepted(ctx)
+	s.Metrics.ConnectionAccepted(s.ctx)
 	var sessionErr error
 	var info connectionInfo
+	if address, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		info.ClientHost, info.ClientPort = address.IP.String(), uint16(address.Port)
+	}
+	// RemoteAddr is what a PROXY protocol header claims, so the connection has
+	// to be asked for the address it was really made from.
+	info.ClientPeer = conn.RemoteAddr()
+	if proxied, ok := conn.(*proxyproto.Conn); ok {
+		info.ClientPeer = proxied.Raw().RemoteAddr()
+	}
 	defer func() {
-		s.Metrics.ConnectionClosed(ctx, info, sessionErr, time.Since(connectTime))
+		s.Metrics.ConnectionClosed(s.ctx, info, sessionErr, time.Since(connectTime))
 	}()
 
 	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
@@ -208,7 +223,7 @@ func (s *Server) handler(conn net.Conn) {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(ctx, session, &info)
+		attrs, err := s.RunPipeSession(s.ctx, session, &info)
 		if err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
 		}
@@ -221,6 +236,16 @@ func (s *Server) handler(conn net.Conn) {
 			logger = logger.With(attr)
 		}
 	}
+}
+
+// sshProtocolVersion reads the protocol version out of an SSH identification
+// string, which RFC 4253 shapes as "SSH-protoversion-softwareversion".
+func sshProtocolVersion(identification string) string {
+	fields := strings.SplitN(identification, "-", 3)
+	if len(fields) < 3 || fields[0] != "SSH" {
+		return ""
+	}
+	return fields[1]
 }
 
 // answerChallenges prompts the downstream user with the given challenges over
@@ -263,6 +288,7 @@ func (s *Server) Handshake(ctx context.Context, session *ssh.PipeSession, info *
 	// Basic information about the downstream client, constant for the connection
 	clientAddress := session.Downstream.RemoteAddr().String()
 	clientVersion := string(session.Downstream.ClientVersion())
+	info.ProtocolVersion = sshProtocolVersion(clientVersion)
 	sessionID := base64.StdEncoding.EncodeToString(session.Downstream.SessionID())
 	// Stage 1: Authenticate the user with API
 	// The public key accepted by the API server, carried over to the later auth
@@ -403,8 +429,17 @@ auth_requests:
 		}
 	}
 	// Stage 2: connect to upstream
+	_, dialSpan := s.Tracer.Start(ctx, "connect upstream", spanKindClient)
 	conn, err := net.DialTimeout("tcp", upstream.Address, s.UpstreamTimeout)
-	s.Metrics.UpstreamDialed(s.ctx, err)
+	dialAttrs := []attribute.KeyValue{
+		s.Tracer.attrs.serverAddress.String(info.UpstreamHost),
+		s.Tracer.attrs.serverPort.Int(int(info.UpstreamPort)),
+	}
+	if err == nil {
+		dialAttrs = append(dialAttrs, s.Tracer.peerAttributes(conn.RemoteAddr())...)
+	}
+	endSpan(dialSpan, err, dialAttrs...)
+	s.Metrics.UpstreamDialed(ctx, err)
 	if err != nil {
 		return err
 	}
@@ -497,9 +532,28 @@ auth_requests:
 }
 
 func (s *Server) RunPipeSession(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
+	// The span covers establishing the session, not its lifetime: a session
+	// that is up lasts as long as the client stays connected, and a span left
+	// open that long is held in memory and reaches no exporter until it ends.
+	// How long a session lived is reported by `sshmux.session.duration`.
+	ctx, span := s.Tracer.Start(ctx, "establish ssh session", spanKindServer)
+	attrs, err := s.establishSession(ctx, session, info)
+	endSpan(span, err, append(s.Tracer.connectionSpanAttributes(*info),
+		s.Tracer.peerAttributes(info.ClientPeer)...)...)
+	if err != nil {
+		return nil, err
+	}
+	return attrs, session.RunPipe()
+}
+
+// establishSession runs the downstream handshake and reports the log
+// attributes of a session that is up.
+func (s *Server) establishSession(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
 	handshakeTime := time.Now()
-	err := s.Handshake(ctx, session, info)
-	s.Metrics.HandshakeFinished(s.ctx, *info, err, time.Since(handshakeTime))
+	handshakeCtx, handshakeSpan := s.Tracer.Start(ctx, "ssh handshake")
+	err := s.Handshake(handshakeCtx, session, info)
+	endSpan(handshakeSpan, err, s.Tracer.connectionSpanAttributes(*info)...)
+	s.Metrics.HandshakeFinished(ctx, *info, err, time.Since(handshakeTime))
 	if err != nil {
 		return nil, err
 	}
@@ -507,12 +561,11 @@ func (s *Server) RunPipeSession(ctx context.Context, session *ssh.PipeSession, i
 	if err := session.SetDeadline(time.Time{}); err != nil {
 		return nil, err
 	}
-	attrs := []slog.Attr{
+	return []slog.Attr{
 		slog.String("username", session.Downstream.User()),
 		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
 		slog.Bool("authenticated", true),
-	}
-	return attrs, session.RunPipe()
+	}, nil
 }
 
 func (s *Server) Start() error {

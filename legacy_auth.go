@@ -165,7 +165,7 @@ func (auth LegacyAuthenticator) AuthUser(ctx context.Context, request any, usern
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", auth.Endpoint, payload)
+	req, err := http.NewRequestWithContext(auth.Tracer.tracePeer(ctx), "POST", auth.Endpoint, payload)
 	if err != nil {
 		return nil, err
 	}

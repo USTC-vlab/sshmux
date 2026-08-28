@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestTracerDisabled(t *testing.T) {
@@ -59,7 +64,7 @@ func TestTracerOTLPExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, span := tracer.tracer.Start(context.Background(), "sshmux.session")
+	_, span := tracer.tracer.Start(context.Background(), "establish ssh session")
 	span.End()
 
 	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
@@ -110,6 +115,7 @@ func TestMakeOTLPTraceExporterProtocols(t *testing.T) {
 	}
 }
 
+// noopTracer is a disabled tracer, for tests that only need the argument.
 func noopTracer() *Tracer {
 	tracer, err := makeTracer(TracerConfig{})
 	if err != nil {
@@ -164,7 +170,7 @@ func TestTracerPropagation(t *testing.T) {
 				t.Fatal(err)
 			}
 			// A span has to be active for there to be any context to carry.
-			ctx, span := tracer.tracer.Start(t.Context(), "sshmux.handshake")
+			ctx, span := tracer.tracer.Start(t.Context(), "ssh handshake")
 			_, _, err = authenticator.Auth(ctx, AuthRequest{Method: "publickey"}, "vlab")
 			span.End()
 			if err != nil {
@@ -183,5 +189,50 @@ func TestTracerPropagation(t *testing.T) {
 				t.Fatalf("traceparent = %q, want none", got)
 			}
 		})
+	}
+}
+
+// TestSpanAttributesDropUnnamed covers the rule that a convention with no name
+// for an attribute leaves its key empty, and that nothing with an empty key
+// reaches a span.
+func TestSpanAttributesDropUnnamed(t *testing.T) {
+	tracer, err := makeTracer(TracerConfig{Convention: AttributeConventionECS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := tracer.connectionSpanAttributes(connectionInfo{Username: "vlab", ProtocolVersion: "2.0"})
+	// ECS has no name for the protocol version, so its key is left empty.
+	unnamed := 0
+	for _, attr := range attrs {
+		if attr.Key == "" {
+			unnamed++
+		}
+	}
+	if unnamed != 1 {
+		t.Errorf("%d attributes have no key, want 1 for the protocol version", unnamed)
+	}
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	_, span := provider.Tracer("test").Start(context.Background(), "test")
+	setSpanAttributes(span, attrs)
+	span.End()
+
+	recorded := recorder.Ended()
+	if len(recorded) != 1 {
+		t.Fatalf("%d spans were recorded, want 1", len(recorded))
+	}
+	keys := map[string]bool{}
+	for _, attr := range recorded[0].Attributes() {
+		if attr.Key == "" {
+			t.Error("an attribute with no key reached the span")
+		}
+		keys[string(attr.Key)] = true
+	}
+	if !keys["network.protocol"] {
+		t.Errorf(`no "network.protocol" attribute; got %v`, slices.Sorted(maps.Keys(keys)))
+	}
+	if keys["network.protocol.version"] {
+		t.Error("ECS has no name for the protocol version, want it dropped")
 	}
 }

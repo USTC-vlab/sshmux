@@ -56,6 +56,7 @@ func TestInstrumentedAuthenticator(t *testing.T) {
 	authenticator := &instrumentedAuthenticator{
 		inner:   &stubAuthenticator{status: 401},
 		metrics: metrics,
+		tracer:  noopTracer(),
 	}
 	status, _, err := authenticator.Auth(t.Context(), AuthRequest{Method: "publickey"}, "vlab")
 	if err != nil || status != 401 {
@@ -65,6 +66,7 @@ func TestInstrumentedAuthenticator(t *testing.T) {
 	failing := &instrumentedAuthenticator{
 		inner:   &stubAuthenticator{err: io.ErrUnexpectedEOF},
 		metrics: metrics,
+		tracer:  noopTracer(),
 	}
 	if _, _, err := failing.Auth(t.Context(), AuthRequest{Method: "keyboard-interactive"}, "vlab"); err == nil {
 		t.Fatal("Auth() error = nil, want an error")

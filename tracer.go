@@ -5,8 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/http/httptrace"
+	"net/url"
+	"slices"
+	"strconv"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -113,6 +120,120 @@ func makeOTLPTraceExporter(config OTLPConfig) (*otlptrace.Exporter, error) {
 	return otlptracehttp.New(ctx, options...)
 }
 
+// Start begins a span. The returned context carries it, so that spans started
+// from it nest, and the trace context reaches the auth API. It is safe to call
+// while tracing is disabled, when the span is a no-op.
+func (t *Tracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	return t.tracer.Start(ctx, name, opts...)
+}
+
+// The kinds of span sshmux records: what it serves to a client, and the calls
+// it makes to other services on that client's behalf.
+var (
+	spanKindServer = trace.WithSpanKind(trace.SpanKindServer)
+	spanKindClient = trace.WithSpanKind(trace.SpanKindClient)
+)
+
+// endSpan records the outcome of a span and ends it. Attributes are only built
+// for a span that is actually recording.
+func endSpan(span trace.Span, err error, attrs ...attribute.KeyValue) {
+	if span.IsRecording() {
+		setSpanAttributes(span, attrs)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}
+	span.End()
+}
+
+// setSpanAttributes records attrs on span, dropping the ones a convention has
+// no name for and so left with an empty key. Every attribute sshmux records
+// reaches a span through here.
+func setSpanAttributes(span trace.Span, attrs []attribute.KeyValue) {
+	attrs = slices.DeleteFunc(attrs, func(attr attribute.KeyValue) bool { return attr.Key == "" })
+	if len(attrs) > 0 {
+		span.SetAttributes(attrs...)
+	}
+}
+
+// connectionSpanAttributes reports the parts of a connection's identity that
+// are known. Unlike the metrics, an unknown value is left off rather than
+// recorded as "unknown", since a span has no cardinality budget to protect.
+func (t *Tracer) connectionSpanAttributes(info connectionInfo) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{t.attrs.networkProtocolName.String("ssh")}
+	if info.ProtocolVersion != "" {
+		attrs = append(attrs, t.attrs.networkProtocolVersion.String(info.ProtocolVersion))
+	}
+	if info.Username != "" {
+		attrs = append(attrs, t.attrs.userName.String(info.Username))
+	}
+	if info.ClientHost != "" {
+		attrs = append(attrs, t.attrs.clientAddress.String(info.ClientHost),
+			t.attrs.clientPort.Int(int(info.ClientPort)))
+	}
+	if info.UpstreamHost != "" {
+		attrs = append(attrs, t.attrs.serverAddress.String(info.UpstreamHost),
+			t.attrs.serverPort.Int(int(info.UpstreamPort)))
+	}
+	return attrs
+}
+
+// serverAttributes names the service a client span called, taking the port a
+// URL leaves out from its scheme.
+func (t *Tracer) serverAttributes(server *url.URL) []attribute.KeyValue {
+	if server == nil || server.Hostname() == "" {
+		return nil
+	}
+	attrs := []attribute.KeyValue{t.attrs.serverAddress.String(server.Hostname())}
+	port := server.Port()
+	if port == "" {
+		port = portForScheme(server.Scheme)
+	}
+	if number, err := strconv.Atoi(port); err == nil {
+		attrs = append(attrs, t.attrs.serverPort.Int(number))
+	}
+	return attrs
+}
+
+func portForScheme(scheme string) string {
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
+}
+
+// tracePeer arranges for the address an HTTP request ends up connected to be
+// recorded on the span already in ctx, which only the transport knows.
+func (t *Tracer) tracePeer(ctx context.Context) context.Context {
+	if !t.enabled {
+		return ctx
+	}
+	span := trace.SpanFromContext(ctx)
+	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			setSpanAttributes(span, t.peerAttributes(info.Conn.RemoteAddr()))
+		},
+	})
+}
+
+// peerAttributes names the other end of the network connection a span covers:
+// where it was reached from for a server span, and what it reached out to for
+// a client span.
+func (t *Tracer) peerAttributes(peer net.Addr) []attribute.KeyValue {
+	tcp, ok := peer.(*net.TCPAddr)
+	if !ok {
+		return nil
+	}
+	return []attribute.KeyValue{
+		t.attrs.networkPeerAddress.String(tcp.IP.String()),
+		t.attrs.networkPeerPort.Int(tcp.Port),
+	}
+}
+
 // Inject writes the trace context of ctx into an outgoing request's headers,
 // so that the server handling it can continue the same trace. It does nothing
 // while tracing or propagation is off, or while ctx carries no span.
@@ -121,6 +242,15 @@ func (t *Tracer) Inject(ctx context.Context, header http.Header) {
 		return
 	}
 	t.propagator.Inject(ctx, propagation.HeaderCarrier(header))
+}
+
+// ForceFlush exports whatever the batcher is holding, without tearing the
+// provider down.
+func (t *Tracer) ForceFlush(ctx context.Context) error {
+	if !t.enabled || t.provider == nil {
+		return nil
+	}
+	return t.provider.ForceFlush(ctx)
 }
 
 // Shutdown flushes pending spans and tears down the exporter.

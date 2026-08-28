@@ -115,7 +115,7 @@ See the [OpenTelemetry Collector's Prometheus exporter](https://github.com/open-
 
 ### Tracer Settings
 
-Tracer settings configure the [OpenTelemetry](https://opentelemetry.io) tracing of `sshmux`. They are grouped under `tracer` in the TOML file.
+Tracer settings configure the [OpenTelemetry](https://opentelemetry.io) tracing of `sshmux`, which is described under [Tracing](#tracing). They are grouped under `tracer` in the TOML file.
 
 | Key            | Type                      | Description                                                                                | Required | Example                              |
 | -------------- | ------------------------- | ------------------------------------------------------------------------------------------ | -------- | ------------------------------------ |
@@ -124,7 +124,7 @@ Tracer settings configure the [OpenTelemetry](https://opentelemetry.io) tracing 
 | `service-name` | `string`                  | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                    | No       | `"sshmux-vlab"`                      |
 | `attributes`   | `[]ResourceAttribute`     | Extra resource attributes attached to every span.                                          | No       | `[{ name = "env", value = "prod" }]` |
 | `sample-ratio` | `float`                   | Fraction of traces to record, between 0 and 1. Defaults to recording every trace.          | No       | `0.25`                               |
-| `propagation`  | `bool`                    | Whether auth API requests carry trace context. Defaults to `true`.                         | No       | `false`                              |
+| `propagation`  | `bool`                    | Whether auth API requests carry trace context. Defaults to `true`. See [Tracing](#tracing). | No      | `false`                              |
 
 Settings left out of the TOML file fall back to the standard OpenTelemetry environment variables, so precedence is configuration file, then environment, then default. Here `service-name` and `attributes` fall back to `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`, and `sample-ratio` to `OTEL_TRACES_SAMPLER` with `OTEL_TRACES_SAMPLER_ARG`.
 
@@ -180,7 +180,12 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 | `default` | the [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/), then the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
 | `ecs` | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
 
-They currently differ in no attribute.
+They differ in two attributes, one named apart and one that ECS has no field for:
+
+| Attribute            | `default`                  | `ecs`              |
+| -------------------- | -------------------------- | ------------------ |
+| Application protocol | `network.protocol.name`    | `network.protocol` |
+| Its version          | `network.protocol.version` | dropped            |
 
 ## Metrics
 
@@ -225,6 +230,27 @@ Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving 
 > **Turn the grouping off once your user base approaches 2000.** Since users normally map one-to-one onto backends, the two dimensions together produce roughly one time series per user, and that count only ever grows, because the metrics are cumulative. The OpenTelemetry SDK caps each instrument at 2000 series by default: past the cap, measurements do not stop being recorded, but they collapse into a single series marked `otel.metric.overflow="true"`, and which users kept a series of their own comes down to whoever connected first after startup. Grouped metrics are therefore only meaningful below the cap.
 >
 > The `OTEL_GO_X_CARDINALITY_LIMIT` environment variable raises the cap if you would rather keep the grouping, at the cost of memory that grows with your user count. There is no TOML equivalent, because raising it is rarely the right answer.
+
+## Tracing
+
+`sshmux` records a span for each stage of a connection, which are turned on and pointed at a collector through the [Tracer Settings](#tracer-settings).
+
+| Span                    | Kind       | Parent                  | Attributes                                                   | Covers                                                    |
+| ----------------------- | ---------- | ----------------------- | ------------------------------------------------------------ | --------------------------------------------------------- |
+| `establish ssh session` | `server`   | —                       | Connection, peer                                             | Accepting the connection through to a session that is up. |
+| `ssh handshake`         | `internal` | `establish ssh session` | Connection                                                   | The downstream handshake and authentication.              |
+| `authenticate user`     | `client`   | `ssh handshake`         | `server.*`, peer, `sshmux.auth.method`, `sshmux.auth.status` | One request to the auth API.                              |
+| `connect upstream`      | `client`   | `ssh handshake`         | `server.*`, peer                                             | Dialling the backend.                                     |
+
+The connection attributes are `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, naming the client that connected and the backend the auth API picked. Those are the logical ends, the ones behind any intermediary. A span's peer, `network.peer.address` and `network.peer.port`, is the address at the other end of the network connection the span itself covers, which its kind fixes — the client that reached `sshmux` for a server span, the service called for a client span, and neither for an internal one. It differs from the logical end where a PROXY protocol hop sits in between, and is missing only from a dial that never connected.
+
+The kinds are also what a collector builds a service graph from: `sshmux` serves the session, and calls the auth API and the backend on its behalf.
+
+The session span ends once the session is established, not when it closes: a session stays up for as long as the client is connected, and a span left open that long is never exported. How long a session lived is reported by `sshmux.session.duration` instead.
+
+An attribute is left off while its value is unknown, rather than recorded as `unknown` the way the metrics do. A span whose step failed records the error and is marked with an error status.
+
+Requests to the auth API carry the `authenticate user` span as a W3C `traceparent` header, so an auth server that is itself instrumented continues the same trace. Set `tracer.propagation` to `false` to stop sending it.
 
 ## Auth API
 
