@@ -46,12 +46,18 @@ const (
 
 // Attribute keys shared by the instruments below.
 const (
-	attrResult          = attribute.Key("result")
-	attrErrorType       = attribute.Key("error.type")
-	attrAuthMethod      = attribute.Key("auth.method")
-	attrAuthStatus      = attribute.Key("auth.status")
-	attrUsername        = attribute.Key("username")
-	attrUpstreamAddress = attribute.Key("upstream.address")
+	// From the OpenTelemetry semantic conventions.
+	attrErrorType     = attribute.Key("error.type")
+	attrUserName      = attribute.Key("user.name")
+	attrServerAddress = attribute.Key("server.address")
+	attrServerPort    = attribute.Key("server.port")
+	// From the Elastic Common Schema, which the semantic conventions have no
+	// equivalent for yet.
+	attrResult = attribute.Key("event.outcome")
+	// sshmux's own, namespaced so that they cannot collide with a future
+	// convention. Neither schema describes an authentication method.
+	attrAuthMethod = attribute.Key("sshmux.auth.method")
+	attrAuthStatus = attribute.Key("sshmux.auth.status")
 )
 
 var (
@@ -61,13 +67,14 @@ var (
 
 // connectionInfo is the per-connection state reported to the metrics recorder.
 // Fields are zero until they become known: Username is only set once the client
-// has sent its first auth request, and Upstream only once the auth API has
+// has sent its first auth request, and the upstream only once the auth API has
 // answered.
 type connectionInfo struct {
 	Username string
-	// Upstream is the backend address as host:port, as returned by the auth API
-	// and before any PROXY protocol override.
-	Upstream string
+	// UpstreamHost and UpstreamPort are the backend the auth API returned,
+	// before any PROXY protocol override.
+	UpstreamHost string
+	UpstreamPort uint16
 	// Established records whether the handshake completed.
 	Established bool
 }
@@ -462,8 +469,9 @@ func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribu
 	attrs := resultAttributes(err)
 	if m.groupConnections {
 		attrs = append(attrs,
-			attrUsername.String(valueOrDefault(info.Username, unknownAttributeValue)),
-			attrUpstreamAddress.String(valueOrDefault(info.Upstream, unknownAttributeValue)),
+			attrUserName.String(valueOrDefault(info.Username, unknownAttributeValue)),
+			attrServerAddress.String(valueOrDefault(info.UpstreamHost, unknownAttributeValue)),
+			attrServerPort.Int(int(info.UpstreamPort)),
 		)
 	}
 	return attribute.NewSet(attrs...)
