@@ -61,7 +61,7 @@ type AuthProxy struct {
 }
 
 type Authenticator interface {
-	Auth(request AuthRequest, username string) (int, *AuthResponse, error)
+	Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error)
 }
 
 func makeAuthenticator(auth AuthConfig) (Authenticator, error) {
@@ -92,7 +92,7 @@ type RESTfulAuthenticator struct {
 	Client   *http.Client
 }
 
-func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+func (auth *RESTfulAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
 	if auth.Version != "v1" {
 		return 500, nil, fmt.Errorf("unsupported API version: %s", auth.Version)
 	}
@@ -103,7 +103,7 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 		return 0, nil, err
 	}
 
-	req, err := http.NewRequest("POST", auth_url, payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", auth_url, payload)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -136,10 +136,10 @@ type instrumentedAuthenticator struct {
 	metrics *Metrics
 }
 
-func (a *instrumentedAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+func (a *instrumentedAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
 	start := time.Now()
-	status, response, err := a.inner.Auth(request, username)
-	a.metrics.AuthFinished(context.Background(), request.Method, status, err, time.Since(start))
+	status, response, err := a.inner.Auth(ctx, request, username)
+	a.metrics.AuthFinished(ctx, request.Method, status, err, time.Since(start))
 	return status, response, err
 }
 

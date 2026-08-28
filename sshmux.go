@@ -169,11 +169,12 @@ func (s *Server) handler(conn net.Conn) {
 	defer conn.Close()
 
 	connectTime := time.Now()
-	s.Metrics.ConnectionAccepted(s.ctx)
+	ctx := s.ctx
+	s.Metrics.ConnectionAccepted(ctx)
 	var sessionErr error
 	var info connectionInfo
 	defer func() {
-		s.Metrics.ConnectionClosed(s.ctx, info, sessionErr, time.Since(connectTime))
+		s.Metrics.ConnectionClosed(ctx, info, sessionErr, time.Since(connectTime))
 	}()
 
 	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
@@ -201,7 +202,7 @@ func (s *Server) handler(conn net.Conn) {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(session, &info)
+		attrs, err := s.RunPipeSession(ctx, session, &info)
 		if err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
 		}
@@ -243,7 +244,7 @@ func answerChallenges(session *ssh.PipeSession, req *AuthRequest, challenges []A
 	return nil
 }
 
-func (s *Server) Handshake(session *ssh.PipeSession, info *connectionInfo) error {
+func (s *Server) Handshake(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) error {
 	hasSetUser := false
 	var user string
 	var upstream *upstreamInformation
@@ -284,7 +285,7 @@ auth_requests:
 			req.PublicKey = string(ssh.MarshalAuthorizedKey(*authReq.PublicKey))
 		}
 		for {
-			status, resp, err := s.Authenticator.Auth(req, user)
+			status, resp, err := s.Authenticator.Auth(ctx, req, user)
 			if err != nil {
 				return err
 			}
@@ -489,9 +490,9 @@ auth_requests:
 	}
 }
 
-func (s *Server) RunPipeSession(session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
+func (s *Server) RunPipeSession(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
 	handshakeTime := time.Now()
-	err := s.Handshake(session, info)
+	err := s.Handshake(ctx, session, info)
 	s.Metrics.HandshakeFinished(s.ctx, *info, err, time.Since(handshakeTime))
 	if err != nil {
 		return nil, err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -78,7 +79,7 @@ func makeLegacyAuthenticator(auth AuthConfig, recovery RecoveryConfig) LegacyAut
 	}
 }
 
-func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+func (auth *LegacyAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
 	var upstream *LegacyAuthUpstream
 	var err error
 	if slices.Contains(auth.UsernamePolicy.InvalidUsernames, username) {
@@ -92,7 +93,7 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 		if err != nil {
 			return 500, nil, err
 		}
-		upstream, err = auth.AuthUserWithPublicKey(publicKey, username)
+		upstream, err = auth.AuthUserWithPublicKey(ctx, publicKey, username)
 		if err != nil {
 			return 500, nil, err
 		}
@@ -125,7 +126,7 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 			resp := AuthResponse{Challenges: []AuthChallenge{challenge}}
 			return 401, &resp, nil
 		}
-		upstream, err = auth.AuthUserWithUserPass(vlabUsername, vlabPassword, username)
+		upstream, err = auth.AuthUserWithUserPass(ctx, vlabUsername, vlabPassword, username)
 		if err != nil {
 			return 500, nil, err
 		}
@@ -157,12 +158,12 @@ func (auth *LegacyAuthenticator) Auth(request AuthRequest, username string) (int
 	return 403, &AuthResponse{}, nil
 }
 
-func (auth LegacyAuthenticator) AuthUser(request any, username string) (*LegacyAuthUpstream, error) {
+func (auth LegacyAuthenticator) AuthUser(ctx context.Context, request any, username string) (*LegacyAuthUpstream, error) {
 	payload := new(bytes.Buffer)
 	if err := json.NewEncoder(payload).Encode(request); err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", auth.Endpoint, payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", auth.Endpoint, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +201,7 @@ func (auth LegacyAuthenticator) AuthUser(request any, username string) (*LegacyA
 	return &upstream, nil
 }
 
-func (auth LegacyAuthenticator) AuthUserWithPublicKey(key ssh.PublicKey, unixUsername string) (*LegacyAuthUpstream, error) {
+func (auth LegacyAuthenticator) AuthUserWithPublicKey(ctx context.Context, key ssh.PublicKey, unixUsername string) (*LegacyAuthUpstream, error) {
 	keyType := key.Type()
 	keyData := base64.StdEncoding.EncodeToString(key.Marshal())
 	request := &LegacyAuthRequestPublicKey{
@@ -210,10 +211,10 @@ func (auth LegacyAuthenticator) AuthUserWithPublicKey(key ssh.PublicKey, unixUse
 		PublicKeyData: keyData,
 		Token:         auth.Token,
 	}
-	return auth.AuthUser(request, unixUsername)
+	return auth.AuthUser(ctx, request, unixUsername)
 }
 
-func (auth LegacyAuthenticator) AuthUserWithUserPass(username string, password string, unixUsername string) (*LegacyAuthUpstream, error) {
+func (auth LegacyAuthenticator) AuthUserWithUserPass(ctx context.Context, username string, password string, unixUsername string) (*LegacyAuthUpstream, error) {
 	request := &LegacyAuthRequestPassword{
 		AuthType:     "key",
 		Username:     username,
@@ -221,5 +222,5 @@ func (auth LegacyAuthenticator) AuthUserWithUserPass(username string, password s
 		UnixUsername: unixUsername,
 		Token:        auth.Token,
 	}
-	return auth.AuthUser(request, unixUsername)
+	return auth.AuthUser(ctx, request, unixUsername)
 }

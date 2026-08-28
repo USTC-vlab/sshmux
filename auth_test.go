@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/url"
 	"strings"
@@ -46,7 +47,7 @@ type stubAuthenticator struct {
 	err    error
 }
 
-func (a *stubAuthenticator) Auth(AuthRequest, string) (int, *AuthResponse, error) {
+func (a *stubAuthenticator) Auth(context.Context, AuthRequest, string) (int, *AuthResponse, error) {
 	return a.status, nil, a.err
 }
 
@@ -56,7 +57,7 @@ func TestInstrumentedAuthenticator(t *testing.T) {
 		inner:   &stubAuthenticator{status: 401},
 		metrics: metrics,
 	}
-	status, _, err := authenticator.Auth(AuthRequest{Method: "publickey"}, "vlab")
+	status, _, err := authenticator.Auth(t.Context(), AuthRequest{Method: "publickey"}, "vlab")
 	if err != nil || status != 401 {
 		t.Fatalf("Auth() = (%d, %v), want (401, nil)", status, err)
 	}
@@ -65,7 +66,7 @@ func TestInstrumentedAuthenticator(t *testing.T) {
 		inner:   &stubAuthenticator{err: io.ErrUnexpectedEOF},
 		metrics: metrics,
 	}
-	if _, _, err := failing.Auth(AuthRequest{Method: "keyboard-interactive"}, "vlab"); err == nil {
+	if _, _, err := failing.Auth(t.Context(), AuthRequest{Method: "keyboard-interactive"}, "vlab"); err == nil {
 		t.Fatal("Auth() error = nil, want an error")
 	}
 
