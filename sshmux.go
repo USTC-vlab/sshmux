@@ -13,11 +13,13 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	reuse "github.com/libp2p/go-reuseport"
 	"github.com/pires/go-proxyproto"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -35,6 +37,7 @@ type Server struct {
 	HandshakeTimeout time.Duration
 	UpstreamTimeout  time.Duration
 	Metrics          *Metrics
+	Tracer           *Tracer
 }
 
 const (
@@ -117,17 +120,26 @@ func makeServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	tracer, err := makeTracer(config.Tracer)
+	if err != nil {
+		return nil, err
+	}
+	// The auth API is named on the span of every call made to it.
+	authEndpoint, err := url.Parse(config.Auth.Endpoint)
+	if err != nil {
+		return nil, err
+	}
 	var authenticator Authenticator
 	if config.Auth.Version == "" || config.Auth.Version == "legacy" {
-		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery)
+		legacyAuthenticator := makeLegacyAuthenticator(config.Auth, config.Recovery, tracer)
 		authenticator = &legacyAuthenticator
 	} else {
-		authenticator, err = makeAuthenticator(config.Auth)
+		authenticator, err = makeAuthenticator(config.Auth, tracer)
 		if err != nil {
 			return nil, err
 		}
 	}
-	authenticator = &instrumentedAuthenticator{inner: authenticator, metrics: metrics}
+	authenticator = &instrumentedAuthenticator{inner: authenticator, metrics: metrics, tracer: tracer, server: authEndpoint}
 	sshmux := &Server{
 		Address:          config.Address,
 		Banner:           config.SSH.Banner,
@@ -138,6 +150,7 @@ func makeServer(config Config) (*Server, error) {
 		HandshakeTimeout: timeoutFromSeconds(config.SSH.HandshakeTimeoutSeconds, defaultHandshakeTimeout),
 		UpstreamTimeout:  timeoutFromSeconds(config.SSH.UpstreamTimeoutSeconds, defaultUpstreamTimeout),
 		Metrics:          metrics,
+		Tracer:           tracer,
 	}
 	return sshmux, nil
 }
@@ -169,23 +182,41 @@ func (s *Server) handler(conn net.Conn) {
 	defer conn.Close()
 
 	connectTime := time.Now()
-	s.Metrics.ConnectionAccepted(s.ctx)
-	var sessionErr error
 	var info connectionInfo
+	if address, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		info.ClientHost, info.ClientPort = address.IP.String(), uint16(address.Port)
+	}
+	// RemoteAddr is what a PROXY protocol header claims, so the connection has
+	// to be asked for the address it was really made from.
+	info.ClientPeer = conn.RemoteAddr()
+	if proxied, ok := conn.(*proxyproto.Conn); ok {
+		info.ClientPeer = proxied.Raw().RemoteAddr()
+	}
+
+	// The span covers establishing the session, not its lifetime: a session
+	// that is up lasts as long as the client stays connected, and a span left
+	// open that long is held in memory and reaches no exporter until it ends.
+	// How long a session lived is reported by `sshmux.session.duration`.
+	ctx, span := s.Tracer.Start(s.ctx, "establish ssh session", spanKindServer)
+	s.Metrics.ConnectionAccepted(ctx)
+	var sessionErr error
 	defer func() {
-		s.Metrics.ConnectionClosed(s.ctx, info, sessionErr, time.Since(connectTime))
+		s.Metrics.ConnectionClosed(ctx, info, sessionErr, time.Since(connectTime))
 	}()
 
-	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
-		sessionErr = err
-		return
-	}
-	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
-	if err != nil {
+	session, attrs, err := s.establishSession(ctx, conn, &info)
+	endSpan(span, err, append(s.Tracer.connectionSpanAttributes(info),
+		s.Tracer.peerAttributes(info.ClientPeer)...)...)
+	// A connection that never reached the SSH transport has nothing to log
+	// about a session, and nothing to close.
+	if session == nil {
 		sessionErr = err
 		return
 	}
 	defer session.Close()
+	if err != nil && err != io.EOF {
+		log.Println("runPipeSession:", err)
+	}
 
 	logger := slog.New(slog.NewJSONHandler(s.LogWriter, nil))
 	logger = logger.With(
@@ -193,27 +224,38 @@ func (s *Server) handler(conn net.Conn) {
 		slog.String("remote_ip", conn.RemoteAddr().String()),
 		slog.String("client_type", "SSH"),
 	)
+	for _, attr := range attrs {
+		logger = logger.With(attr)
+	}
 	defer func() {
 		logger.Info("SSH proxy session", slog.Int64("disconnect_time", time.Now().Unix()))
 	}()
+
+	if err != nil {
+		// Once the session is up, the client ends it by disconnecting, so only
+		// a failure to establish one counts against the session result.
+		sessionErr = err
+		return
+	}
 
 	select {
 	case <-s.ctx.Done():
 		return
 	default:
-		attrs, err := s.RunPipeSession(session, &info)
-		if err != nil && err != io.EOF {
+		if err := session.RunPipe(); err != nil && err != io.EOF {
 			log.Println("runPipeSession:", err)
 		}
-		// Once the session is up, the client ends it by disconnecting, so only
-		// a failure to establish one counts against the session result.
-		if !info.Established {
-			sessionErr = err
-		}
-		for _, attr := range attrs {
-			logger = logger.With(attr)
-		}
 	}
+}
+
+// sshProtocolVersion reads the protocol version out of an SSH identification
+// string, which RFC 4253 shapes as "SSH-protoversion-softwareversion".
+func sshProtocolVersion(identification string) string {
+	fields := strings.SplitN(identification, "-", 3)
+	if len(fields) < 3 || fields[0] != "SSH" {
+		return ""
+	}
+	return fields[1]
 }
 
 // answerChallenges prompts the downstream user with the given challenges over
@@ -243,7 +285,7 @@ func answerChallenges(session *ssh.PipeSession, req *AuthRequest, challenges []A
 	return nil
 }
 
-func (s *Server) Handshake(session *ssh.PipeSession, info *connectionInfo) error {
+func (s *Server) Handshake(ctx context.Context, session *ssh.PipeSession, info *connectionInfo) error {
 	hasSetUser := false
 	var user string
 	var upstream *upstreamInformation
@@ -256,6 +298,7 @@ func (s *Server) Handshake(session *ssh.PipeSession, info *connectionInfo) error
 	// Basic information about the downstream client, constant for the connection
 	clientAddress := session.Downstream.RemoteAddr().String()
 	clientVersion := string(session.Downstream.ClientVersion())
+	info.ProtocolVersion = sshProtocolVersion(clientVersion)
 	sessionID := base64.StdEncoding.EncodeToString(session.Downstream.SessionID())
 	// Stage 1: Authenticate the user with API
 	// The public key accepted by the API server, carried over to the later auth
@@ -284,7 +327,7 @@ auth_requests:
 			req.PublicKey = string(ssh.MarshalAuthorizedKey(*authReq.PublicKey))
 		}
 		for {
-			status, resp, err := s.Authenticator.Auth(req, user)
+			status, resp, err := s.Authenticator.Auth(ctx, req, user)
 			if err != nil {
 				return err
 			}
@@ -396,8 +439,17 @@ auth_requests:
 		}
 	}
 	// Stage 2: connect to upstream
+	_, dialSpan := s.Tracer.Start(ctx, "connect upstream", spanKindClient)
 	conn, err := net.DialTimeout("tcp", upstream.Address, s.UpstreamTimeout)
-	s.Metrics.UpstreamDialed(s.ctx, err)
+	dialAttrs := []attribute.KeyValue{
+		s.Tracer.attrs.serverAddress.String(info.UpstreamHost),
+		s.Tracer.attrs.serverPort.Int(int(info.UpstreamPort)),
+	}
+	if err == nil {
+		dialAttrs = append(dialAttrs, s.Tracer.peerAttributes(conn.RemoteAddr())...)
+	}
+	endSpan(dialSpan, err, dialAttrs...)
+	s.Metrics.UpstreamDialed(ctx, err)
 	if err != nil {
 		return err
 	}
@@ -489,23 +541,36 @@ auth_requests:
 	}
 }
 
-func (s *Server) RunPipeSession(session *ssh.PipeSession, info *connectionInfo) ([]slog.Attr, error) {
-	handshakeTime := time.Now()
-	err := s.Handshake(session, info)
-	s.Metrics.HandshakeFinished(s.ctx, *info, err, time.Since(handshakeTime))
+// establishSession brings a connection up to a session ready to be piped. The
+// session is reported as soon as the SSH transport is up, so that a handshake
+// that fails afterwards is still closed and logged, and the log attributes only
+// once the session is established.
+func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *connectionInfo) (*ssh.PipeSession, []slog.Attr, error) {
+	if err := conn.SetDeadline(time.Now().Add(s.HandshakeTimeout)); err != nil {
+		return nil, nil, err
+	}
+	session, err := ssh.NewPipeSession(conn, s.SSHConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	handshakeTime := time.Now()
+	handshakeCtx, handshakeSpan := s.Tracer.Start(ctx, "ssh handshake")
+	err = s.Handshake(handshakeCtx, session, info)
+	endSpan(handshakeSpan, err, s.Tracer.connectionSpanAttributes(*info)...)
+	s.Metrics.HandshakeFinished(ctx, *info, err, time.Since(handshakeTime))
+	if err != nil {
+		return session, nil, err
 	}
 	info.Established = true
 	if err := session.SetDeadline(time.Time{}); err != nil {
-		return nil, err
+		return session, nil, err
 	}
-	attrs := []slog.Attr{
+	return session, []slog.Attr{
 		slog.String("username", session.Downstream.User()),
 		slog.String("host_ip", session.Upstream.RemoteAddr().String()),
 		slog.Bool("authenticated", true),
-	}
-	return attrs, session.RunPipe()
+	}, nil
 }
 
 func (s *Server) Start() error {
@@ -516,8 +581,9 @@ func (s *Server) Start() error {
 	// set up TCP listener
 	listener, err := reuse.Listen("tcp", s.Address)
 	if err != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 		s.Metrics.Shutdown(shutdownCtx)
+		s.Tracer.Shutdown(shutdownCtx)
 		cancel()
 		return err
 	}
@@ -586,7 +652,8 @@ func (s *Server) Shutdown() {
 	}
 	s.wg.Wait()
 	// flush the final measurements once no handler can record anymore
-	ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
 	s.Metrics.Shutdown(ctx)
+	s.Tracer.Shutdown(ctx)
 }

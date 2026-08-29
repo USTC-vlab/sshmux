@@ -9,15 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
-	"os/user"
 	"strings"
 	"testing"
 	"time"
-
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
 // testConnection is the connection identity used by the metric assertions.
@@ -43,7 +37,7 @@ func prometheusMetrics(t *testing.T) *Metrics {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 		defer cancel()
 		metrics.Shutdown(ctx)
 	})
@@ -142,47 +136,7 @@ func TestMetricsPrometheusPathNormalized(t *testing.T) {
 	}
 }
 
-type stubAuthenticator struct {
-	status int
-	err    error
-}
-
-func (a *stubAuthenticator) Auth(AuthRequest, string) (int, *AuthResponse, error) {
-	return a.status, nil, a.err
-}
-
-func TestInstrumentedAuthenticator(t *testing.T) {
-	metrics := prometheusMetrics(t)
-	authenticator := &instrumentedAuthenticator{
-		inner:   &stubAuthenticator{status: 401},
-		metrics: metrics,
-	}
-	status, _, err := authenticator.Auth(AuthRequest{Method: "publickey"}, "vlab")
-	if err != nil || status != 401 {
-		t.Fatalf("Auth() = (%d, %v), want (401, nil)", status, err)
-	}
-
-	failing := &instrumentedAuthenticator{
-		inner:   &stubAuthenticator{err: io.ErrUnexpectedEOF},
-		metrics: metrics,
-	}
-	if _, _, err := failing.Auth(AuthRequest{Method: "keyboard-interactive"}, "vlab"); err == nil {
-		t.Fatal("Auth() error = nil, want an error")
-	}
-
-	body := scrape(t, metrics)
-	for _, want := range []string{
-		`sshmux_auth_requests_total{event_outcome="success",sshmux_auth_method="publickey",sshmux_auth_status="401"} 1`,
-		`sshmux_auth_requests_total{error_type="eof",event_outcome="failure",sshmux_auth_method="keyboard-interactive",sshmux_auth_status="0"} 1`,
-		`sshmux_auth_duration_seconds_count{event_outcome="success",sshmux_auth_method="publickey",sshmux_auth_status="401"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("scrape output does not contain %q:\n%s", want, body)
-		}
-	}
-}
-
-func TestMetricsOTLPHTTPExport(t *testing.T) {
+func TestMetricsOTLPExport(t *testing.T) {
 	requests := make(chan string, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.URL.Path
@@ -192,7 +146,7 @@ func TestMetricsOTLPHTTPExport(t *testing.T) {
 
 	metrics, err := makeMetrics(MetricsConfig{
 		Enabled: true,
-		OTLP: MetricsOTLPConfig{
+		OTLP: OTLPConfig{
 			Enabled:  true,
 			Endpoint: server.URL + "/v1/metrics",
 			Headers:  []HTTPHeaderConfig{{Name: "Authorization", Value: "ApiKey 12345678"}},
@@ -207,7 +161,7 @@ func TestMetricsOTLPHTTPExport(t *testing.T) {
 	metrics.ConnectionAccepted(context.Background())
 
 	// Shutdown flushes the periodic reader, so an export must have happened.
-	ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
 	metrics.Shutdown(ctx)
 
@@ -221,27 +175,27 @@ func TestMetricsOTLPHTTPExport(t *testing.T) {
 	}
 }
 
-func TestMakeOTLPExporterErrors(t *testing.T) {
+func TestMakeOTLPMetricExporterErrors(t *testing.T) {
 	cases := []struct {
 		name   string
-		config MetricsOTLPConfig
+		config OTLPConfig
 	}{
-		{"bad scheme", MetricsOTLPConfig{Enabled: true, Endpoint: "udp://127.0.0.1:4318"}},
-		{"unknown protocol", MetricsOTLPConfig{Enabled: true, Endpoint: "http://127.0.0.1:4318", Protocol: "thrift"}},
-		{"grpc with path", MetricsOTLPConfig{Enabled: true, Endpoint: "http://127.0.0.1:4317/v1/metrics", Protocol: "grpc"}},
+		{"bad scheme", OTLPConfig{Enabled: true, Endpoint: "udp://127.0.0.1:4318"}},
+		{"unknown protocol", OTLPConfig{Enabled: true, Endpoint: "http://127.0.0.1:4318", Protocol: "thrift"}},
+		{"grpc with path", OTLPConfig{Enabled: true, Endpoint: "http://127.0.0.1:4317/v1/metrics", Protocol: "grpc"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := makeOTLPExporter(tc.config); err == nil {
-				t.Fatal("makeOTLPExporter() error = nil, want an error")
+			if _, err := makeOTLPMetricExporter(tc.config); err == nil {
+				t.Fatal("makeOTLPMetricExporter() error = nil, want an error")
 			}
 		})
 	}
 }
 
-// TestOTLPEndpointPaths pins that a configured endpoint is used verbatim, the
+// TestMetricsOTLPEndpointPaths pins that a configured endpoint is used verbatim, the
 // way a signal-specific endpoint is, with no signal path appended to it.
-func TestOTLPEndpointPaths(t *testing.T) {
+func TestMetricsOTLPEndpointPaths(t *testing.T) {
 	cases := []struct{ endpoint, want string }{
 		{"http://%s/v1/metrics", "/v1/metrics"},
 		{"http://%s/otlp/v1/metrics", "/otlp/v1/metrics"},
@@ -256,7 +210,7 @@ func TestOTLPEndpointPaths(t *testing.T) {
 			host := strings.TrimPrefix(server.URL, "http://")
 			exportOnce(t, MetricsConfig{
 				Enabled: true,
-				OTLP:    MetricsOTLPConfig{Enabled: true, Endpoint: fmt.Sprintf(tc.endpoint, host)},
+				OTLP:    OTLPConfig{Enabled: true, Endpoint: fmt.Sprintf(tc.endpoint, host)},
 			})
 			if got := awaitExport(t, requests).Path; got != tc.want {
 				t.Fatalf("endpoint %q posted to %q, want %q", tc.endpoint, got, tc.want)
@@ -265,17 +219,17 @@ func TestOTLPEndpointPaths(t *testing.T) {
 	}
 }
 
-func TestMakeOTLPExporterProtocols(t *testing.T) {
+func TestMakeOTLPMetricExporterProtocols(t *testing.T) {
 	for _, protocol := range []string{"", "http", "http/protobuf", "grpc"} {
 		endpoint := "https://otel.example.com:4318/otlp"
 		if protocol == "grpc" {
 			endpoint = "https://otel.example.com:4317"
 		}
-		exporter, err := makeOTLPExporter(MetricsOTLPConfig{Enabled: true, Protocol: protocol, Endpoint: endpoint})
+		exporter, err := makeOTLPMetricExporter(OTLPConfig{Enabled: true, Protocol: protocol, Endpoint: endpoint})
 		if err != nil {
 			t.Fatalf("protocol %q: %v", protocol, err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 		exporter.Shutdown(ctx)
 		cancel()
 	}
@@ -302,55 +256,6 @@ func TestErrorType(t *testing.T) {
 	}
 }
 
-// TestServerMetricsWiring checks that a connection served by the real server
-// shows up in the exported metrics, i.e. that the instruments are wired into
-// the connection handler and not just reachable in isolation.
-func TestServerMetricsWiring(t *testing.T) {
-	sshmux, err := makeServer(Config{
-		Address: "127.0.0.1:0",
-		SSH:     SSHConfig{HostKeys: []SSHKeyConfig{{Path: "fixtures/ssh_host_ed25519_key"}}},
-		Auth:    AuthConfig{Endpoint: "http://127.0.0.1:5000", Version: "v1"},
-		Metrics: MetricsConfig{
-			Enabled:    true,
-			Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sshmux.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer sshmux.Shutdown()
-
-	// A connection that goes away before the SSH handshake completes still has
-	// to be accounted for as an accepted and then failed session.
-	conn, err := net.Dial("tcp", sshmux.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
-
-	deadline := time.Now().Add(5 * time.Second)
-	var body string
-	for time.Now().Before(deadline) {
-		body = scrape(t, sshmux.Metrics)
-		if strings.Contains(body, "sshmux_sessions_total{") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	for _, want := range []string{
-		`sshmux_connections_total 1`,
-		`sshmux_connections_active 0`,
-		`sshmux_sessions_total{`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("scrape output does not contain %q:\n%s", want, body)
-		}
-	}
-}
-
 func TestConnectionGrouping(t *testing.T) {
 	metrics := prometheusMetrics(t)
 	metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
@@ -367,60 +272,6 @@ func TestConnectionGrouping(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("scrape output does not contain %q:\n%s", want, body)
 		}
-	}
-}
-
-func TestOTLPProtocolPrecedence(t *testing.T) {
-	cases := []struct {
-		name       string
-		configured string
-		env        map[string]string
-		want       string
-		wantErr    bool
-	}{
-		{name: "default", want: "http/protobuf"},
-		{name: "configured", configured: "grpc", want: "grpc"},
-		{
-			name: "from the generic environment variable",
-			env:  map[string]string{envOTLPProtocol: "grpc"},
-			want: "grpc",
-		},
-		{
-			name: "the metrics environment variable wins over the generic one",
-			env:  map[string]string{envOTLPProtocol: "grpc", envOTLPMetricsProtocol: "http/protobuf"},
-			want: "http/protobuf",
-		},
-		{
-			name:       "configuration wins over the environment",
-			configured: "http",
-			env:        map[string]string{envOTLPMetricsProtocol: "grpc"},
-			want:       "http/protobuf",
-		},
-		{
-			name:    "http/json is not supported",
-			env:     map[string]string{envOTLPProtocol: "http/json"},
-			wantErr: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			for key, value := range tc.env {
-				t.Setenv(key, value)
-			}
-			got, err := otlpProtocol(tc.configured)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("otlpProtocol(%q) error = nil, want an error", tc.configured)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tc.want {
-				t.Fatalf("otlpProtocol(%q) = %q, want %q", tc.configured, got, tc.want)
-			}
-		})
 	}
 }
 
@@ -467,26 +318,26 @@ func exportOnce(t *testing.T, config MetricsConfig) {
 		t.Fatal(err)
 	}
 	metrics.ConnectionAccepted(t.Context())
-	ctx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
 	metrics.Shutdown(ctx)
 }
 
-// TestOTLPEndpointFromEnvironment covers the other half of the rule: the
+// TestMetricsOTLPEndpointFromEnvironment covers the other half of the rule: the
 // generic environment variable is a base URL, so the signal path is appended.
-func TestOTLPEndpointFromEnvironment(t *testing.T) {
+func TestMetricsOTLPEndpointFromEnvironment(t *testing.T) {
 	server, paths := otlpTestCollector(t)
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
 
 	// No endpoint in the config file, so the environment has to supply it.
-	exportOnce(t, MetricsConfig{Enabled: true, OTLP: MetricsOTLPConfig{Enabled: true}})
+	exportOnce(t, MetricsConfig{Enabled: true, OTLP: OTLPConfig{Enabled: true}})
 
 	if path := awaitExport(t, paths).Path; path != "/v1/metrics" {
 		t.Fatalf("OTLP request path = %q, want %q", path, "/v1/metrics")
 	}
 }
 
-func TestOTLPEndpointConfigWinsOverEnvironment(t *testing.T) {
+func TestMetricsOTLPEndpointConfigWinsOverEnvironment(t *testing.T) {
 	configured, paths := otlpTestCollector(t)
 	unused, unusedPaths := otlpTestCollector(t)
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", unused.URL)
@@ -494,7 +345,7 @@ func TestOTLPEndpointConfigWinsOverEnvironment(t *testing.T) {
 
 	exportOnce(t, MetricsConfig{
 		Enabled: true,
-		OTLP:    MetricsOTLPConfig{Enabled: true, Endpoint: configured.URL + "/otlp/v1/metrics"},
+		OTLP:    OTLPConfig{Enabled: true, Endpoint: configured.URL + "/otlp/v1/metrics"},
 	})
 
 	if path := awaitExport(t, paths).Path; path != "/otlp/v1/metrics" {
@@ -507,13 +358,13 @@ func TestOTLPEndpointConfigWinsOverEnvironment(t *testing.T) {
 	}
 }
 
-func TestOTLPHeadersPrecedence(t *testing.T) {
+func TestMetricsOTLPHeadersPrecedence(t *testing.T) {
 	t.Run("from the environment", func(t *testing.T) {
 		server, requests := otlpTestCollector(t)
 		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
 		t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-scope-orgid=vlab")
 
-		exportOnce(t, MetricsConfig{Enabled: true, OTLP: MetricsOTLPConfig{Enabled: true}})
+		exportOnce(t, MetricsConfig{Enabled: true, OTLP: OTLPConfig{Enabled: true}})
 
 		if got := awaitExport(t, requests).Header.Get("X-Scope-Orgid"); got != "vlab" {
 			t.Fatalf("X-Scope-OrgID = %q, want %q", got, "vlab")
@@ -524,7 +375,7 @@ func TestOTLPHeadersPrecedence(t *testing.T) {
 		server, requests := otlpTestCollector(t)
 		t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-scope-orgid=from-environment")
 
-		exportOnce(t, MetricsConfig{Enabled: true, OTLP: MetricsOTLPConfig{
+		exportOnce(t, MetricsConfig{Enabled: true, OTLP: OTLPConfig{
 			Enabled:  true,
 			Endpoint: server.URL + "/v1/metrics",
 			Headers:  []HTTPHeaderConfig{{Name: "X-Scope-OrgID", Value: "from-config"}},
@@ -536,14 +387,14 @@ func TestOTLPHeadersPrecedence(t *testing.T) {
 	})
 }
 
-// TestOTLPIntervalFromEnvironment checks that an export happens on the interval
+// TestMetricsOTLPIntervalFromEnvironment checks that an export happens on the interval
 // set by the environment, without a shutdown flush forcing it.
-func TestOTLPIntervalFromEnvironment(t *testing.T) {
+func TestMetricsOTLPIntervalFromEnvironment(t *testing.T) {
 	server, requests := otlpTestCollector(t)
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
 	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "200")
 
-	metrics, err := makeMetrics(MetricsConfig{Enabled: true, OTLP: MetricsOTLPConfig{Enabled: true}})
+	metrics, err := makeMetrics(MetricsConfig{Enabled: true, OTLP: OTLPConfig{Enabled: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,136 +407,6 @@ func TestOTLPIntervalFromEnvironment(t *testing.T) {
 	if path := awaitExport(t, requests).Path; path != "/v1/metrics" {
 		t.Fatalf("OTLP request path = %q, want %q", path, "/v1/metrics")
 	}
-}
-
-func TestMetricsResourceAttributePrecedence(t *testing.T) {
-	fromEnv := resource.NewWithAttributes(semconv.SchemaURL,
-		semconv.ServiceName("from-environment"),
-		semconv.ServiceVersion("v9.9.9"),
-	)
-	unnamed := resource.NewWithAttributes(semconv.SchemaURL,
-		semconv.ServiceName("unknown_service:sshmux"),
-	)
-
-	// The environment supplies the name, so sshmux must not override it.
-	attrs, err := metricsResourceAttributes(MetricsConfig{}, fromEnv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name, ok := findAttribute(attrs, semconv.ServiceNameKey); ok {
-		t.Errorf("service.name = %q, want it left to the environment", name)
-	}
-	if version, ok := findAttribute(attrs, semconv.ServiceVersionKey); ok {
-		t.Errorf("service.version = %q, want it left to the environment", version)
-	}
-
-	// An explicit name in the config file wins over the environment.
-	attrs, err = metricsResourceAttributes(MetricsConfig{ServiceName: "from-config"}, fromEnv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name, _ := findAttribute(attrs, semconv.ServiceNameKey); name != "from-config" {
-		t.Errorf("service.name = %q, want %q", name, "from-config")
-	}
-
-	// With neither set, sshmux falls back to its own default.
-	attrs, err = metricsResourceAttributes(MetricsConfig{}, unnamed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name, _ := findAttribute(attrs, semconv.ServiceNameKey); name != defaultMetricsServiceName {
-		t.Errorf("service.name = %q, want %q", name, defaultMetricsServiceName)
-	}
-	if _, ok := findAttribute(attrs, semconv.ServiceVersionKey); !ok {
-		t.Error("service.version is missing, want the build version")
-	}
-
-	// Attributes from the config file are always applied.
-	attrs, err = metricsResourceAttributes(MetricsConfig{
-		Attributes: []MetricsAttributeConfig{{Name: "env", Value: "staging"}},
-	}, unnamed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value, _ := findAttribute(attrs, attribute.Key("env")); value != "staging" {
-		t.Errorf("env = %q, want %q", value, "staging")
-	}
-
-	if _, err := metricsResourceAttributes(MetricsConfig{
-		Attributes: []MetricsAttributeConfig{{Value: "no name"}},
-	}, unnamed); err == nil {
-		t.Error("a nameless resource attribute should be rejected")
-	}
-}
-
-func findAttribute(attrs []attribute.KeyValue, key attribute.Key) (string, bool) {
-	for _, attr := range attrs {
-		if attr.Key == key {
-			return attr.Value.AsString(), true
-		}
-	}
-	return "", false
-}
-
-// TestServerMetricsUpstreamGrouping drives a real SSH client through sshmux and
-// checks that the backend address the auth API returned reaches the metrics.
-func TestServerMetricsUpstreamGrouping(t *testing.T) {
-	if _, err := exec.LookPath("sshd"); err != nil {
-		t.Skip("sshd is not available")
-	}
-	initEnv(t)
-	enableProxy = false
-
-	currentUser, err := user.Current()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sshmux, err := makeServer(Config{
-		Address: "127.0.0.1:0",
-		SSH:     SSHConfig{HostKeys: []SSHKeyConfig{{Path: "fixtures/ssh_host_ed25519_key"}}},
-		Auth:    AuthConfig{Endpoint: "http://" + apiServerAddr.String(), Version: "v1"},
-		Metrics: MetricsConfig{
-			Enabled:    true,
-			Prometheus: MetricsPrometheusConfig{Enabled: true, Address: "127.0.0.1:0"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sshmux.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer sshmux.Shutdown()
-
-	sshd := onetimeSSHDServer(t)
-	defer stopSSHD(t, sshd)
-	address := sshmux.Addr().(*net.TCPAddr)
-	sshCommand := exec.Command(
-		"ssh", "-p", fmt.Sprint(address.Port),
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "ControlMaster=no",
-		"-i", "fixtures/ssh_id_rsa",
-		"-o", "IdentityAgent=no",
-		address.IP.String(), "uname")
-	sshCommand.Dir, _ = os.Getwd()
-	if err := sshCommand.Run(); err != nil {
-		t.Fatal("ssh: ", err)
-	}
-
-	// The session is recorded once its handler winds down, shortly after the
-	// client exits.
-	want := fmt.Sprintf(`sshmux_sessions_total{event_outcome="success",server_address=%q,server_port="%d",user_name=%q} 1`,
-		sshdServerAddr.IP.String(), sshdServerAddr.Port, currentUser.Username)
-	deadline := time.Now().Add(5 * time.Second)
-	var body string
-	for time.Now().Before(deadline) {
-		body = scrape(t, sshmux.Metrics)
-		if strings.Contains(body, want) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Errorf("scrape output does not contain %q:\n%s", want, body)
 }
 
 // countSeries counts the exported sshmux_sessions_total series.
@@ -860,43 +581,10 @@ func TestPrometheusTranslationStrategy(t *testing.T) {
 	})
 }
 
-// TestConventionAttributeNames pins how each convention resolves, and that the
-// two lines currently agree — the property that lets `ecs` be the stable choice
-// today at no cost.
-func TestConventionAttributeNames(t *testing.T) {
-	for _, convention := range []MetricsConvention{"", MetricsConventionDefault} {
-		names, err := conventionAttributeNames(convention)
-		if err != nil {
-			t.Fatalf("convention %q: %v", convention, err)
-		}
-		if names != defaultAttributeNames {
-			t.Errorf("convention %q did not resolve to the semantic conventions", convention)
-		}
-	}
-	names, err := conventionAttributeNames(MetricsConventionECS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if names != ecsAttributeNames {
-		t.Error(`convention "ecs" did not resolve to the Elastic Common Schema`)
-	}
-
-	// The conventions adopted these fields from ECS, so the two lines name
-	// every attribute identically. This will stop holding when they diverge,
-	// and the test is what will say so.
-	if defaultAttributeNames != ecsAttributeNames {
-		t.Log("the conventions have diverged; the README table needs updating")
-	}
-
-	if _, err := conventionAttributeNames("nonsense"); err == nil {
-		t.Error("an unknown convention should be refused")
-	}
-}
-
-// TestConventionEndToEnd checks that the configured convention reaches the
+// TestMetricsConvention checks that the configured convention reaches the
 // exported labels.
-func TestConventionEndToEnd(t *testing.T) {
-	for _, convention := range []MetricsConvention{MetricsConventionDefault, MetricsConventionECS} {
+func TestMetricsConvention(t *testing.T) {
+	for _, convention := range []AttributeConvention{AttributeConventionDefault, AttributeConventionECS} {
 		t.Run(string(convention), func(t *testing.T) {
 			metrics, err := makeMetrics(MetricsConfig{
 				Enabled:    true,

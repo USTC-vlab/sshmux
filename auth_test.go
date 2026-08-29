@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,7 +28,7 @@ func TestAuthenticatorTimeouts(t *testing.T) {
 		Endpoint:       endpoint.String(),
 		Version:        "v1",
 		TimeoutSeconds: 7,
-	})
+	}, noopTracer())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +36,50 @@ func TestAuthenticatorTimeouts(t *testing.T) {
 		t.Fatalf("REST auth timeout = %s, want %s", got, 7*time.Second)
 	}
 
-	legacy := makeLegacyAuthenticator(AuthConfig{TimeoutSeconds: 11}, RecoveryConfig{})
+	legacy := makeLegacyAuthenticator(AuthConfig{TimeoutSeconds: 11}, RecoveryConfig{}, noopTracer())
 	if got := legacy.Client.Timeout; got != 11*time.Second {
 		t.Fatalf("legacy auth timeout = %s, want %s", got, 11*time.Second)
+	}
+}
+
+type stubAuthenticator struct {
+	status int
+	err    error
+}
+
+func (a *stubAuthenticator) Auth(context.Context, AuthRequest, string) (int, *AuthResponse, error) {
+	return a.status, nil, a.err
+}
+
+func TestInstrumentedAuthenticator(t *testing.T) {
+	metrics := prometheusMetrics(t)
+	authenticator := &instrumentedAuthenticator{
+		inner:   &stubAuthenticator{status: 401},
+		metrics: metrics,
+		tracer:  noopTracer(),
+	}
+	status, _, err := authenticator.Auth(t.Context(), AuthRequest{Method: "publickey"}, "vlab")
+	if err != nil || status != 401 {
+		t.Fatalf("Auth() = (%d, %v), want (401, nil)", status, err)
+	}
+
+	failing := &instrumentedAuthenticator{
+		inner:   &stubAuthenticator{err: io.ErrUnexpectedEOF},
+		metrics: metrics,
+		tracer:  noopTracer(),
+	}
+	if _, _, err := failing.Auth(t.Context(), AuthRequest{Method: "keyboard-interactive"}, "vlab"); err == nil {
+		t.Fatal("Auth() error = nil, want an error")
+	}
+
+	body := scrape(t, metrics)
+	for _, want := range []string{
+		`sshmux_auth_requests_total{event_outcome="success",sshmux_auth_method="publickey",sshmux_auth_status="401"} 1`,
+		`sshmux_auth_requests_total{error_type="eof",event_outcome="failure",sshmux_auth_method="keyboard-interactive",sshmux_auth_status="0"} 1`,
+		`sshmux_auth_duration_seconds_count{event_outcome="success",sshmux_auth_method="publickey",sshmux_auth_status="401"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scrape output does not contain %q:\n%s", want, body)
+		}
 	}
 }

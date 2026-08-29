@@ -20,6 +20,7 @@ var configFixtures = []configFixture{
 	{"fixtures/legacy.toml", checkLegacyTOML},
 	{"fixtures/config.json", checkLegacyJSON},
 	{"fixtures/metrics.toml", checkMetricsTOML},
+	{"fixtures/tracer.toml", checkTracerTOML},
 }
 
 func TestLoadConfigFixtures(t *testing.T) {
@@ -29,7 +30,7 @@ func TestLoadConfigFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if fixture.path == "fixtures/metrics.toml" {
+			if fixture.path == "fixtures/metrics.toml" || fixture.path == "fixtures/tracer.toml" {
 				fixture.check(t, config)
 				return
 			}
@@ -186,6 +187,52 @@ func checkMetricsTOML(t *testing.T, config Config) {
 	}
 }
 
+// checkTracerTOML covers every key of the tracer group.
+func checkTracerTOML(t *testing.T, config Config) {
+	tracer := config.Tracer
+	if !tracer.Enabled || tracer.Convention != AttributeConventionECS {
+		t.Errorf("tracer = %+v", tracer)
+	}
+	if tracer.ServiceName != "sshmux-fixture" {
+		t.Errorf("tracer.service-name = %q", tracer.ServiceName)
+	}
+	if len(tracer.Attributes) != 1 || tracer.Attributes[0].Name != "deployment.environment.name" {
+		t.Errorf("tracer.attributes = %+v", tracer.Attributes)
+	}
+	if tracer.SampleRatio == nil || *tracer.SampleRatio != 0.25 {
+		t.Errorf("tracer.sample-ratio = %v, want 0.25", tracer.SampleRatio)
+	}
+	if tracer.Propagation == nil || *tracer.Propagation {
+		t.Errorf("tracer.propagation = %v, want an explicit false", tracer.Propagation)
+	}
+
+	otlp := tracer.OTLP
+	if !otlp.Enabled || otlp.Protocol != "grpc" || otlp.Endpoint != "http://127.0.0.1:4317" {
+		t.Errorf("tracer.otlp = %+v", otlp)
+	}
+	if otlp.TimeoutSeconds != 5 || len(otlp.Headers) != 1 {
+		t.Errorf("tracer.otlp = %+v", otlp)
+	}
+}
+
+// TestTracerConfigAbsent checks that a configuration without a tracer group
+// leaves it off, with both tri-state keys unset.
+func TestTracerConfigAbsent(t *testing.T) {
+	config, err := loadConfig("fixtures/config.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Tracer.Enabled || config.Tracer.OTLP.Enabled {
+		t.Errorf("tracer = %+v, want it disabled", config.Tracer)
+	}
+	if config.Tracer.SampleRatio != nil || config.Tracer.Propagation != nil {
+		t.Errorf("tracer tri-state keys = %v, %v, want both nil", config.Tracer.SampleRatio, config.Tracer.Propagation)
+	}
+	if !boolOrDefault(config.Tracer.Propagation, true) {
+		t.Error("an absent propagation must leave it enabled")
+	}
+}
+
 // TestMetricsConfigAbsent checks that a configuration without a metrics group
 // leaves it switched off.
 func TestMetricsConfigAbsent(t *testing.T) {
@@ -248,7 +295,7 @@ func TestConvertProxyPolicyConfig(t *testing.T) {
 // declares as types: that a good value decodes, that a bad one is refused
 // while parsing rather than later, and that every accepted value resolves.
 func TestEnumeratedMetricsKeys(t *testing.T) {
-	conventions := []MetricsConvention{MetricsConventionDefault, MetricsConventionECS}
+	conventions := []AttributeConvention{AttributeConventionDefault, AttributeConventionECS}
 	strategies := []PrometheusTranslationStrategy{UnderscoreEscaping, NoUTF8Escaping, NoTranslation}
 
 	for _, convention := range conventions {

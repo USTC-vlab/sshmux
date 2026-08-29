@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -60,10 +61,10 @@ type AuthProxy struct {
 }
 
 type Authenticator interface {
-	Auth(request AuthRequest, username string) (int, *AuthResponse, error)
+	Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error)
 }
 
-func makeAuthenticator(auth AuthConfig) (Authenticator, error) {
+func makeAuthenticator(auth AuthConfig, tracer *Tracer) (Authenticator, error) {
 	if auth.Version == "" {
 		auth.Version = "v1"
 	}
@@ -80,6 +81,7 @@ func makeAuthenticator(auth AuthConfig) (Authenticator, error) {
 		Version:  auth.Version,
 		Headers:  headers,
 		Client:   &http.Client{Timeout: timeoutFromSeconds(auth.TimeoutSeconds, defaultAuthTimeout)},
+		Tracer:   tracer,
 	}
 	return &authenticator, nil
 }
@@ -89,9 +91,10 @@ type RESTfulAuthenticator struct {
 	Version  string
 	Headers  http.Header
 	Client   *http.Client
+	Tracer   *Tracer
 }
 
-func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
+func (auth *RESTfulAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
 	if auth.Version != "v1" {
 		return 500, nil, fmt.Errorf("unsupported API version: %s", auth.Version)
 	}
@@ -102,13 +105,14 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 		return 0, nil, err
 	}
 
-	req, err := http.NewRequest("POST", auth_url, payload)
+	req, err := http.NewRequestWithContext(auth.Tracer.tracePeer(ctx), "POST", auth_url, payload)
 	if err != nil {
 		return 0, nil, err
 	}
 	req.Header = auth.Headers.Clone()
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
+	auth.Tracer.Inject(ctx, req.Header)
 
 	res, err := auth.Client.Do(req)
 	if err != nil {
@@ -126,6 +130,27 @@ func (auth *RESTfulAuthenticator) Auth(request AuthRequest, username string) (in
 		return res.StatusCode, nil, err
 	}
 	return res.StatusCode, &response, nil
+}
+
+// instrumentedAuthenticator records the outcome and latency of every auth API
+// request made through the wrapped Authenticator.
+type instrumentedAuthenticator struct {
+	inner   Authenticator
+	metrics *Metrics
+	tracer  *Tracer
+	// server is the auth API the wrapped Authenticator calls.
+	server *url.URL
+}
+
+func (a *instrumentedAuthenticator) Auth(ctx context.Context, request AuthRequest, username string) (int, *AuthResponse, error) {
+	start := time.Now()
+	ctx, span := a.tracer.Start(ctx, "authenticate user", spanKindClient)
+	status, response, err := a.inner.Auth(ctx, request, username)
+	endSpan(span, err, append(a.tracer.serverAttributes(a.server),
+		a.tracer.attrs.sshmuxAuthMethod.String(request.Method),
+		a.tracer.attrs.sshmuxAuthStatus.Int(status))...)
+	a.metrics.AuthFinished(ctx, request.Method, status, err, time.Since(start))
+	return status, response, err
 }
 
 func timeoutFromSeconds(seconds uint, defaultTimeout time.Duration) time.Duration {

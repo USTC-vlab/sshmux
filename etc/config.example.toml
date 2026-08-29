@@ -48,6 +48,17 @@ enabled = true
 address = "127.0.0.1:9100"
 path = "/metrics"
 
+[tracer]
+enabled = true
+service-name = "sshmux"
+sample-ratio = 0.25
+propagation = true
+
+[tracer.otlp]
+enabled = true
+protocol = "grpc"
+endpoint = "http://127.0.0.1:4317"
+
 [proxy-protocol]
 enabled = true
 hosts = ["127.0.0.22"]

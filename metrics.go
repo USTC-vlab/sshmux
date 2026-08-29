@@ -8,9 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -25,96 +23,12 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
 const (
-	defaultMetricsServiceName = "sshmux"
-	defaultPrometheusAddress  = "127.0.0.1:9100"
-	defaultPrometheusPath     = "/metrics"
-	metricsShutdownTimeout    = 5 * time.Second
-	metricsScopeName          = "github.com/USTC-vlab/sshmux"
-	// unknownAttributeValue is recorded for a grouping attribute whose value is
-	// not known, e.g. the username of a connection that failed before auth.
-	unknownAttributeValue = "unknown"
+	defaultPrometheusAddress = "127.0.0.1:9100"
+	defaultPrometheusPath    = "/metrics"
 )
-
-const (
-	envOTLPProtocol        = "OTEL_EXPORTER_OTLP_PROTOCOL"
-	envOTLPMetricsProtocol = "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
-)
-
-// attributeNames is the set of attribute keys one convention resolves to.
-// Only the names differ between conventions; the values never do.
-type attributeNames struct {
-	result        attribute.Key
-	errorType     attribute.Key
-	userName      attribute.Key
-	serverAddress attribute.Key
-	serverPort    attribute.Key
-	authMethod    attribute.Key
-	authStatus    attribute.Key
-}
-
-// defaultAttributeNames resolves each attribute against the OpenTelemetry
-// semantic conventions first, then the Elastic Common Schema, then sshmux's
-// own namespace, and follows the conventions wherever they move.
-var defaultAttributeNames = attributeNames{
-	errorType:     attribute.Key("error.type"),     // semconv
-	userName:      attribute.Key("user.name"),      // semconv
-	serverAddress: attribute.Key("server.address"), // semconv
-	serverPort:    attribute.Key("server.port"),    // semconv
-	result:        attribute.Key("event.outcome"),  // ECS; semconv has no equivalent
-	authMethod:    attribute.Key("sshmux.auth.method"),
-	authStatus:    attribute.Key("sshmux.auth.status"),
-}
-
-// ecsAttributeNames resolves against the Elastic Common Schema only, which does
-// not move when the semantic conventions do.
-//
-// It currently names every attribute identically to defaultAttributeNames,
-// because the conventions adopted these fields from ECS. The two are kept
-// apart so that they can diverge without the configuration changing shape.
-var ecsAttributeNames = attributeNames{
-	errorType:     attribute.Key("error.type"),
-	userName:      attribute.Key("user.name"),
-	serverAddress: attribute.Key("server.address"),
-	serverPort:    attribute.Key("server.port"),
-	result:        attribute.Key("event.outcome"),
-	authMethod:    attribute.Key("sshmux.auth.method"),
-	authStatus:    attribute.Key("sshmux.auth.status"),
-}
-
-// conventionAttributeNames resolves the configured convention.
-func conventionAttributeNames(convention MetricsConvention) (attributeNames, error) {
-	switch convention {
-	case "", MetricsConventionDefault:
-		return defaultAttributeNames, nil
-	case MetricsConventionECS:
-		return ecsAttributeNames, nil
-	default:
-		// Unreachable: validateMetricsConfig accepts only the names above.
-		return attributeNames{}, fmt.Errorf("unsupported convention: %s", convention)
-	}
-}
-
-func (n attributeNames) success() attribute.KeyValue { return n.result.String("success") }
-func (n attributeNames) failure() attribute.KeyValue { return n.result.String("failure") }
-
-// connectionInfo is the per-connection state reported to the metrics recorder.
-// Fields are zero until they become known: Username is only set once the client
-// has sent its first auth request, and the upstream only once the auth API has
-// answered.
-type connectionInfo struct {
-	Username string
-	// UpstreamHost and UpstreamPort are the backend the auth API returned,
-	// before any PROXY protocol override.
-	UpstreamHost string
-	UpstreamPort uint16
-	// Established records whether the handshake completed.
-	Established bool
-}
 
 // Metrics owns the OpenTelemetry meter provider of an sshmux server, the
 // instruments recorded by it, and the optional Prometheus scrape endpoint.
@@ -155,7 +69,7 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 		attrs:            names,
 	}
 	if !config.Enabled {
-		return newMetrics(metrics, noop.NewMeterProvider().Meter(metricsScopeName))
+		return newMetrics(metrics, noop.NewMeterProvider().Meter(otelScopeName))
 	}
 	if !config.OTLP.Enabled && !config.Prometheus.Enabled {
 		return nil, errors.New("metrics are enabled but no exporter is configured")
@@ -163,7 +77,7 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 
 	readers := make([]sdkmetric.Reader, 0, 2)
 	if config.OTLP.Enabled {
-		exporter, err := makeOTLPExporter(config.OTLP)
+		exporter, err := makeOTLPMetricExporter(config.OTLP)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +116,7 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 		metrics.promHandler = mux
 	}
 
-	res, err := makeMetricsResource(config)
+	res, err := otelResource(config.ServiceName, config.Attributes)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +128,7 @@ func makeMetrics(config MetricsConfig) (*Metrics, error) {
 		options = append(options, sdkmetric.WithReader(reader))
 	}
 	metrics.provider = sdkmetric.NewMeterProvider(options...)
-	return newMetrics(metrics, metrics.provider.Meter(metricsScopeName))
+	return newMetrics(metrics, metrics.provider.Meter(otelScopeName))
 }
 
 // prometheusTranslationStrategy resolves how OTLP names are rendered for
@@ -248,7 +162,7 @@ func durationViews() []sdkmetric.View {
 	longBuckets := []float64{1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 21600, 86400}
 	view := func(name string, buckets []float64) sdkmetric.View {
 		return sdkmetric.NewView(
-			sdkmetric.Instrument{Name: name, Scope: instrumentation.Scope{Name: metricsScopeName}},
+			sdkmetric.Instrument{Name: name, Scope: instrumentation.Scope{Name: otelScopeName}},
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
 				Boundaries: buckets,
 				NoMinMax:   false,
@@ -262,123 +176,27 @@ func durationViews() []sdkmetric.View {
 	}
 }
 
-func makeMetricsResource(config MetricsConfig) (*resource.Resource, error) {
-	// resource.Default reads OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES.
-	base := resource.Default()
-	attrs, err := metricsResourceAttributes(config, base)
+func makeOTLPMetricExporter(config OTLPConfig) (sdkmetric.Exporter, error) {
+	protocol, err := otlpProtocol(config.Protocol, envOTLPMetricsProtocol)
 	if err != nil {
 		return nil, err
 	}
-	// The base resource and our attributes share the same semantic convention
-	// schema, so the merge below never conflicts. Attributes from the second
-	// resource win, which is why only the ones the environment did not already
-	// provide are added.
-	res, err := resource.Merge(base, resource.NewWithAttributes(semconv.SchemaURL, attrs...))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build metrics resource: %w", err)
-	}
-	return res, nil
-}
-
-// metricsResourceAttributes returns the resource attributes to layer on top of
-// base, honouring the config file over the environment over sshmux's defaults.
-func metricsResourceAttributes(config MetricsConfig, base *resource.Resource) ([]attribute.KeyValue, error) {
-	var attrs []attribute.KeyValue
-	// resource.Default only reports an `unknown_service:...` name when neither
-	// OTEL_SERVICE_NAME nor OTEL_RESOURCE_ATTRIBUTES supplied one.
-	if config.ServiceName != "" {
-		attrs = append(attrs, semconv.ServiceName(config.ServiceName))
-	} else if name, ok := resourceAttribute(base, semconv.ServiceNameKey); !ok || strings.HasPrefix(name, "unknown_service") {
-		attrs = append(attrs, semconv.ServiceName(defaultMetricsServiceName))
-	}
-	if _, ok := resourceAttribute(base, semconv.ServiceVersionKey); !ok {
-		attrs = append(attrs, semconv.ServiceVersion(buildVersion()))
-	}
-	if _, ok := resourceAttribute(base, semconv.HostNameKey); !ok {
-		if hostname, err := os.Hostname(); err == nil && hostname != "" {
-			attrs = append(attrs, semconv.HostName(hostname))
-		}
-	}
-	for _, attr := range config.Attributes {
-		if attr.Name == "" {
-			return nil, errors.New("metrics resource attributes must have a name")
-		}
-		attrs = append(attrs, attribute.String(attr.Name, attr.Value))
-	}
-	return attrs, nil
-}
-
-func resourceAttribute(res *resource.Resource, key attribute.Key) (string, bool) {
-	if res == nil {
-		return "", false
-	}
-	for _, attr := range res.Attributes() {
-		if attr.Key == key {
-			return attr.Value.AsString(), true
-		}
-	}
-	return "", false
-}
-
-// otlpProtocol resolves the OTLP transport, honouring the config file over
-// OTEL_EXPORTER_OTLP_METRICS_PROTOCOL over OTEL_EXPORTER_OTLP_PROTOCOL. Unlike
-// the endpoint and the headers, the protocol selects which exporter package is
-// used, so it cannot be delegated to the exporter itself.
-func otlpProtocol(configured string) (string, error) {
-	protocol := configured
-	for _, key := range []string{envOTLPMetricsProtocol, envOTLPProtocol} {
-		if protocol != "" {
-			break
-		}
-		protocol = strings.TrimSpace(os.Getenv(key))
-	}
-	switch protocol {
-	case "", "http", "http/protobuf":
-		return "http/protobuf", nil
-	case "grpc":
-		return "grpc", nil
-	default:
-		return "", fmt.Errorf("unsupported OTLP protocol: %s", protocol)
-	}
-}
-
-func makeOTLPExporter(config MetricsOTLPConfig) (sdkmetric.Exporter, error) {
-	protocol, err := otlpProtocol(config.Protocol)
+	endpoint, err := otlpEndpoint(config, protocol)
 	if err != nil {
 		return nil, err
 	}
-	// An unset endpoint defers to OTEL_EXPORTER_OTLP_[METRICS_]ENDPOINT, and in
-	// turn to the OTLP default of localhost:4317 or localhost:4318.
-	var endpoint *url.URL
-	if config.Endpoint != "" {
-		endpoint, err = url.Parse(config.Endpoint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse OTLP endpoint: %w", err)
-		}
-		switch endpoint.Scheme {
-		case "http", "https":
-		default:
-			return nil, fmt.Errorf("unsupported OTLP endpoint scheme: %s", endpoint.Scheme)
-		}
-	}
-	headers := make(map[string]string, len(config.Headers))
-	for _, header := range config.Headers {
-		headers[header.Name] = header.Value
-	}
+	headers := otlpHeaders(config)
 
 	if protocol == "grpc" {
 		var options []otlpmetricgrpc.Option
 		if endpoint != nil {
-			if path := strings.Trim(endpoint.Path, "/"); path != "" {
-				return nil, fmt.Errorf("gRPC OTLP endpoint must not have a path: %s", config.Endpoint)
-			}
 			options = append(options, otlpmetricgrpc.WithEndpointURL(endpoint.String()))
 		}
 		if len(headers) > 0 {
 			options = append(options, otlpmetricgrpc.WithHeaders(headers))
 		}
-		if config.TimeoutSeconds != 0 {
-			options = append(options, otlpmetricgrpc.WithTimeout(time.Duration(config.TimeoutSeconds)*time.Second))
+		if timeout, ok := otlpTimeout(config); ok {
+			options = append(options, otlpmetricgrpc.WithTimeout(timeout))
 		}
 		return otlpmetricgrpc.New(context.Background(), options...)
 	}
@@ -394,8 +212,8 @@ func makeOTLPExporter(config MetricsOTLPConfig) (sdkmetric.Exporter, error) {
 	if len(headers) > 0 {
 		options = append(options, otlpmetrichttp.WithHeaders(headers))
 	}
-	if config.TimeoutSeconds != 0 {
-		options = append(options, otlpmetrichttp.WithTimeout(time.Duration(config.TimeoutSeconds)*time.Second))
+	if timeout, ok := otlpTimeout(config); ok {
+		options = append(options, otlpmetrichttp.WithTimeout(timeout))
 	}
 	return otlpmetrichttp.New(context.Background(), options...)
 }
@@ -522,14 +340,14 @@ func (m *Metrics) UpstreamDialed(ctx context.Context, err error) {
 	if !m.enabled {
 		return
 	}
-	m.upstreamTotal.Add(ctx, 1, metric.WithAttributeSet(attribute.NewSet(m.attrs.resultAttributes(err)...)))
+	m.upstreamTotal.Add(ctx, 1, metric.WithAttributeSet(attribute.NewSet(m.attrs.outcomeAttributes(err)...)))
 }
 
 func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, err error, duration time.Duration) {
 	if !m.enabled {
 		return
 	}
-	attrs := append(m.attrs.resultAttributes(err), m.attrs.authMethod.String(method), m.attrs.authStatus.Int(status))
+	attrs := append(m.attrs.outcomeAttributes(err), m.attrs.sshmuxAuthMethod.String(method), m.attrs.sshmuxAuthStatus.Int(status))
 	set := metric.WithAttributeSet(attribute.NewSet(attrs...))
 	m.authRequestsTotal.Add(ctx, 1, set)
 	m.authDuration.Record(ctx, duration.Seconds(), set)
@@ -539,7 +357,7 @@ func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, e
 // dimensions the connection metrics are grouped by, unless the grouping has
 // been turned off.
 func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribute.Set {
-	attrs := m.attrs.resultAttributes(err)
+	attrs := m.attrs.outcomeAttributes(err)
 	if m.groupConnections {
 		attrs = append(attrs,
 			m.attrs.userName.String(valueOrDefault(info.Username, unknownAttributeValue)),
@@ -550,7 +368,7 @@ func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribu
 	return attribute.NewSet(attrs...)
 }
 
-func (n attributeNames) resultAttributes(err error) []attribute.KeyValue {
+func (n attributeNames) outcomeAttributes(err error) []attribute.KeyValue {
 	if err == nil {
 		return []attribute.KeyValue{n.success()}
 	}
@@ -573,40 +391,4 @@ func errorType(err error) string {
 		return "timeout"
 	}
 	return "other"
-}
-
-// instrumentedAuthenticator records the outcome and latency of every auth API
-// request made through the wrapped Authenticator.
-type instrumentedAuthenticator struct {
-	inner   Authenticator
-	metrics *Metrics
-}
-
-func (a *instrumentedAuthenticator) Auth(request AuthRequest, username string) (int, *AuthResponse, error) {
-	start := time.Now()
-	status, response, err := a.inner.Auth(request, username)
-	a.metrics.AuthFinished(context.Background(), request.Method, status, err, time.Since(start))
-	return status, response, err
-}
-
-func boolOrDefault(value *bool, fallback bool) bool {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func valueOrDefault(value string, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func buildVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" {
-		return "unknown"
-	}
-	return info.Main.Version
 }
