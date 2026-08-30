@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -201,16 +202,15 @@ func TestSpanAttributesDropUnnamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	attrs := tracer.connectionSpanAttributes(connectionInfo{Username: "vlab", ProtocolVersion: "2.0"})
-	// ECS has no name for the protocol version, so its key is left empty.
-	unnamed := 0
+	// ECS has no name for the protocol version, so the builder leaves it out.
 	for _, attr := range attrs {
 		if attr.Key == "" {
-			unnamed++
+			t.Error("an attribute with no key reached the caller")
 		}
 	}
-	if unnamed != 1 {
-		t.Errorf("%d attributes have no key, want 1 for the protocol version", unnamed)
-	}
+
+	// An attribute assembled elsewhere is still dropped on the way to a span.
+	attrs = append(attrs, attribute.KeyValue{Value: attribute.StringValue("orphan")})
 
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

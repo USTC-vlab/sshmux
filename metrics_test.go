@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -232,27 +230,6 @@ func TestMakeOTLPMetricExporterProtocols(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 		exporter.Shutdown(ctx)
 		cancel()
-	}
-}
-
-func TestErrorType(t *testing.T) {
-	cases := []struct {
-		err  error
-		want string
-	}{
-		{io.EOF, "eof"},
-		{io.ErrUnexpectedEOF, "eof"},
-		{context.Canceled, "canceled"},
-		{context.DeadlineExceeded, "timeout"},
-		{os.ErrDeadlineExceeded, "timeout"},
-		{net.ErrClosed, "closed"},
-		{fmt.Errorf("wrapped: %w", os.ErrDeadlineExceeded), "timeout"},
-		{errors.New("boom"), "other"},
-	}
-	for _, tc := range cases {
-		if got := errorType(tc.err); got != tc.want {
-			t.Errorf("errorType(%v) = %q, want %q", tc.err, got, tc.want)
-		}
 	}
 }
 

@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -147,7 +145,7 @@ func prometheusTranslationStrategy(configured PrometheusTranslationStrategy) (ot
 	case NoTranslation:
 		return otlptranslator.NoTranslation, nil
 	default:
-		// Unreachable: validateMetricsConfig accepts only the names above.
+		// Unreachable: UnmarshalText accepts only the names above.
 		return "", fmt.Errorf("unsupported Prometheus translation strategy: %s", configured)
 	}
 }
@@ -366,29 +364,4 @@ func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribu
 		)
 	}
 	return attribute.NewSet(attrs...)
-}
-
-func (n attributeNames) outcomeAttributes(err error) []attribute.KeyValue {
-	if err == nil {
-		return []attribute.KeyValue{n.success()}
-	}
-	return []attribute.KeyValue{n.failure(), n.errorType.String(errorType(err))}
-}
-
-func errorType(err error) string {
-	switch {
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return "eof"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
-		return "timeout"
-	case errors.Is(err, net.ErrClosed):
-		return "closed"
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout"
-	}
-	return "other"
 }

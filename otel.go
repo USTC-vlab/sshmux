@@ -23,9 +23,6 @@ const (
 	defaultServiceName  = "sshmux"
 	otelScopeName       = "github.com/USTC-vlab/sshmux"
 	otelShutdownTimeout = 5 * time.Second
-	// unknownAttributeValue is recorded for a grouping attribute whose value is
-	// not known, e.g. the username of a connection that failed before auth.
-	unknownAttributeValue = "unknown"
 )
 
 const (
@@ -34,8 +31,6 @@ const (
 	envOTLPTracesProtocol  = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
 )
 
-// attributeNames is the set of attribute keys one convention resolves to.
-// Only the names differ between conventions; the values never do.
 // connectionInfo is the per-connection state the metrics and the spans are
 // recorded from. Fields are zero until they become known: Username is only set
 // once the client has sent its first auth request, and the upstream only once
@@ -59,84 +54,6 @@ type connectionInfo struct {
 	// Established records whether the handshake completed.
 	Established bool
 }
-
-type attributeNames struct {
-	eventOutcome           attribute.Key
-	errorType              attribute.Key
-	userName               attribute.Key
-	clientAddress          attribute.Key
-	clientPort             attribute.Key
-	serverAddress          attribute.Key
-	serverPort             attribute.Key
-	networkProtocolName    attribute.Key
-	networkProtocolVersion attribute.Key
-	// A span's peer is the other end of the network connection it covers, as
-	// against the logical end behind any intermediary. Its kind fixes which
-	// side that is: the client for a server span, the callee for a client span.
-	networkPeerAddress attribute.Key
-	networkPeerPort    attribute.Key
-	sshmuxAuthMethod   attribute.Key
-	sshmuxAuthStatus   attribute.Key
-}
-
-// defaultAttributeNames resolves each attribute against the OpenTelemetry
-// semantic conventions first, then the Elastic Common Schema, then sshmux's
-// own namespace, and follows the conventions wherever they move.
-var defaultAttributeNames = attributeNames{
-	errorType:              attribute.Key("error.type"),               // semconv
-	userName:               attribute.Key("user.name"),                // semconv
-	clientAddress:          attribute.Key("client.address"),           // semconv
-	clientPort:             attribute.Key("client.port"),              // semconv
-	serverAddress:          attribute.Key("server.address"),           // semconv
-	serverPort:             attribute.Key("server.port"),              // semconv
-	networkProtocolName:    attribute.Key("network.protocol.name"),    // semconv
-	networkProtocolVersion: attribute.Key("network.protocol.version"), // semconv
-	networkPeerAddress:     attribute.Key("network.peer.address"),     // semconv
-	networkPeerPort:        attribute.Key("network.peer.port"),        // semconv
-	eventOutcome:           attribute.Key("event.outcome"),            // ECS; semconv has no equivalent
-	sshmuxAuthMethod:       attribute.Key("sshmux.auth.method"),
-	sshmuxAuthStatus:       attribute.Key("sshmux.auth.status"),
-}
-
-// ecsAttributeNames resolves against the Elastic Common Schema only, which does
-// not move when the semantic conventions do.
-//
-// It currently names every attribute identically to defaultAttributeNames,
-// because the conventions adopted these fields from ECS. The two are kept
-// apart so that they can diverge without the configuration changing shape.
-var ecsAttributeNames = attributeNames{
-	errorType:     attribute.Key("error.type"),
-	userName:      attribute.Key("user.name"),
-	clientAddress: attribute.Key("client.address"),
-	clientPort:    attribute.Key("client.port"),
-	serverAddress: attribute.Key("server.address"),
-	serverPort:    attribute.Key("server.port"),
-	// The two attributes the conventions do not share: ECS names the
-	// application protocol without the namespace the semantic conventions put
-	// it in, and has nothing for its version. An empty key drops the attribute.
-	networkProtocolName: attribute.Key("network.protocol"),
-	networkPeerAddress:  attribute.Key("network.peer.address"),
-	networkPeerPort:     attribute.Key("network.peer.port"),
-	eventOutcome:        attribute.Key("event.outcome"),
-	sshmuxAuthMethod:    attribute.Key("sshmux.auth.method"),
-	sshmuxAuthStatus:    attribute.Key("sshmux.auth.status"),
-}
-
-// conventionAttributeNames resolves the configured convention.
-func conventionAttributeNames(convention AttributeConvention) (attributeNames, error) {
-	switch convention {
-	case "", AttributeConventionDefault:
-		return defaultAttributeNames, nil
-	case AttributeConventionECS:
-		return ecsAttributeNames, nil
-	default:
-		// Unreachable: validateMetricsConfig accepts only the names above.
-		return attributeNames{}, fmt.Errorf("unsupported convention: %s", convention)
-	}
-}
-
-func (n attributeNames) success() attribute.KeyValue { return n.eventOutcome.String("success") }
-func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.String("failure") }
 
 func otelResource(serviceName string, configured []ResourceAttributeConfig) (*resource.Resource, error) {
 	// resource.Default reads OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES.
