@@ -21,6 +21,15 @@ var configFixtures = []configFixture{
 	{"fixtures/config.json", checkLegacyJSON},
 	{"fixtures/metrics.toml", checkMetricsTOML},
 	{"fixtures/tracer.toml", checkTracerTOML},
+	{"fixtures/logger.toml", checkLoggerTOML},
+}
+
+// signalFixtures name the fixtures that describe one signal each, rather than a
+// whole Vlab-shaped deployment, and so skip the shared assertions.
+var signalFixtures = map[string]bool{
+	"fixtures/metrics.toml": true,
+	"fixtures/tracer.toml":  true,
+	"fixtures/logger.toml":  true,
 }
 
 func TestLoadConfigFixtures(t *testing.T) {
@@ -30,7 +39,7 @@ func TestLoadConfigFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if fixture.path == "fixtures/metrics.toml" || fixture.path == "fixtures/tracer.toml" {
+			if signalFixtures[fixture.path] {
 				fixture.check(t, config)
 				return
 			}
@@ -184,6 +193,37 @@ func checkMetricsTOML(t *testing.T, config Config) {
 	}
 	if metrics.ConnectionGrouping == nil || *metrics.ConnectionGrouping {
 		t.Errorf("metrics.connection-grouping = %v, want an explicit false", metrics.ConnectionGrouping)
+	}
+}
+
+// checkLoggerTOML covers every key of the logger group.
+func checkLoggerTOML(t *testing.T, config Config) {
+	logger := config.Logger
+	if !logger.Enabled || logger.Convention != AttributeConventionECS {
+		t.Errorf("logger = %+v", logger)
+	}
+	if logger.ServiceName != "sshmux-fixture" {
+		t.Errorf("logger.service-name = %q", logger.ServiceName)
+	}
+	if len(logger.Attributes) != 1 || logger.Attributes[0].Name != "deployment.environment.name" {
+		t.Errorf("logger.attributes = %+v", logger.Attributes)
+	}
+	// The fixture uses the current spelling, so the deprecated one stays empty.
+	if logger.Endpoint != "" {
+		t.Errorf("logger.endpoint = %q, want it unset", logger.Endpoint)
+	}
+	// The sinks are written differently while sharing the group's convention.
+	if !logger.UDP.Enabled || logger.UDP.Address != "127.0.0.1:5557" ||
+		logger.UDP.Shape != LogRecordShapeLegacy {
+		t.Errorf("logger.udp = %+v", logger.UDP)
+	}
+
+	otlp := logger.OTLP
+	if !otlp.Enabled || otlp.Protocol != "http" || otlp.Endpoint != "http://127.0.0.1:4318/v1/logs" {
+		t.Errorf("logger.otlp = %+v", otlp)
+	}
+	if otlp.TimeoutSeconds != 5 || len(otlp.Headers) != 1 {
+		t.Errorf("logger.otlp = %+v", otlp)
 	}
 }
 
