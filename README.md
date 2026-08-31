@@ -60,7 +60,7 @@ The following settings are only used by `legacy` auth APIs. They are also groupe
 
 #### Recovery Settings
 
-Recovery settings configures Vlab recovery service support of `sshmux` for `legacy` auth APIs. They are grouped under `recovery` in the TOML file.
+Recovery settings configures Vlab recovery service support of `sshmux` for `legacy` auth APIs, which name the [`role`](#upstream) `recovery` on the upstream they return for the usernames given here. They are grouped under `recovery` in the TOML file.
 
 | Key         | Type       | Description                                           | Required | Example                   |
 | ----------- | ---------- | ----------------------------------------------------- | -------- | ------------------------- |
@@ -418,6 +418,7 @@ and disconnects the user.
 | `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `password`    | `string` | Password for authenticating with upstream.                                  | No       |
+| `role`        | `string` | Label for this upstream, carried into `sshmux`'s telemetry and never read by it. | No  |
 
 ##### `Proxy`
 

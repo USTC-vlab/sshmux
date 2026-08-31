@@ -374,6 +374,7 @@ auth_requests:
 				// Report the backend the API picked, not the PROXY protocol
 				// hop that the address below may be rewritten to.
 				info.UpstreamHost, info.UpstreamPort = upstreamResp.Host, upstreamResp.Port
+				info.UpstreamRole = upstreamResp.Role
 				if resp.Proxy != nil {
 					proxyConfig := *resp.Proxy
 					// parse protocol version

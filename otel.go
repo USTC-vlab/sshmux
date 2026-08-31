@@ -39,9 +39,11 @@ const (
 type connectionInfo struct {
 	Username string
 	// UpstreamHost and UpstreamPort are the backend the auth API returned,
-	// before any PROXY protocol override.
+	// before any PROXY protocol override, and UpstreamRole the label the API
+	// put on that backend, empty where it labelled none.
 	UpstreamHost string
 	UpstreamPort uint16
+	UpstreamRole string
 	// ClientHost and ClientPort are the downstream address, as the PROXY
 	// protocol header reports it where there is one, and ClientPeer the address
 	// actually connected from. They are for the spans: grouping metrics by
