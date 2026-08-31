@@ -75,6 +75,24 @@ func logFailedSessionRecord(logger *Logger, info connectionInfo, err error, conn
 		logger.sessionAttributes(info, err, connect, disconnect)...)
 }
 
+// awaitEventRecord reads until a record of the named class arrives, so that a
+// test can ignore what the server reports of itself around the session it drove.
+func awaitEventRecord(t *testing.T, records chan map[string]any, event string) map[string]any {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case record := <-records:
+			if record["otel.event.name"] == event {
+				return record
+			}
+		case <-deadline:
+			t.Fatalf("no %s record arrived", event)
+			return nil
+		}
+	}
+}
+
 func awaitRecord(t *testing.T, records chan map[string]any) map[string]any {
 	t.Helper()
 	select {
@@ -387,10 +405,60 @@ func TestServerLogsNothingBeforeHandshake(t *testing.T) {
 	}
 	conn.Close()
 
-	select {
-	case record := <-records:
-		t.Errorf("a record was written for a connection that never started a session: %v", record)
-	case <-time.After(time.Second):
+	// The server reports itself starting, which is not a session record.
+	for {
+		select {
+		case record := <-records:
+			if record["otel.event.name"] == "session.end" {
+				t.Errorf("a record was written for a connection that never started a session: %v", record)
+			}
+			continue
+		case <-time.After(time.Second):
+		}
+		return
+	}
+}
+
+// TestServerLifecycleRecords covers what a server reports of itself, which is
+// what tells a collector it is running at all: nothing else says so, and the
+// records for the traffic through it cannot.
+func TestServerLifecycleRecords(t *testing.T) {
+	sshmux, records := loggingServer(t)
+
+	started := awaitEventRecord(t, records, "sshmux.server.start")
+	if started["message"] != "sshmux started" {
+		t.Errorf("message = %v", started["message"])
+	}
+	if started["log.level"] != "INFO" {
+		t.Errorf("log.level = %v, want a record like any other", started["log.level"])
+	}
+	// The address it was reached at, which is a port the configuration did not
+	// name: the fixture asks for one and is given whichever was free. sshmux is
+	// the server of this one, as the backend is of a session.
+	if started["server.address"] != "127.0.0.1" {
+		t.Errorf("server.address = %v", started["server.address"])
+	}
+	if port, ok := started["server.port"].(float64); !ok || port == 0 {
+		t.Errorf("server.port = %v, want the port it listens on", started["server.port"])
+	}
+
+	sshmux.Shutdown()
+	stopped := awaitEventRecord(t, records, "sshmux.server.stop")
+	if stopped["message"] != "sshmux stopped" {
+		t.Errorf("message = %v", stopped["message"])
+	}
+	// The listener is closed by the time this is reported, and still names the
+	// address it was reached at while it was open.
+	if stopped["server.address"] != started["server.address"] || stopped["server.port"] != started["server.port"] {
+		t.Errorf("stopped at %v:%v, want the address it started on",
+			stopped["server.address"], stopped["server.port"])
+	}
+	// Each names how long its own event took, not how long the service ran.
+	for _, record := range []map[string]any{started, stopped} {
+		if took, ok := record["event.duration"].(float64); !ok || took <= 0 {
+			t.Errorf("event.duration = %v on %v, want what the event took",
+				record["event.duration"], record["otel.event.name"])
+		}
 	}
 }
 
@@ -439,10 +507,7 @@ func TestServerLoggerWiring(t *testing.T) {
 		client.Close()
 	}
 
-	started := awaitRecord(t, records)
-	if started["otel.event.name"] != "session.start" {
-		t.Fatalf("the first record is %v, want the session starting", started["otel.event.name"])
-	}
+	started := awaitEventRecord(t, records, "session.start")
 	if _, ok := started["user.name"]; ok {
 		t.Errorf("user.name = %v, want nobody authenticated yet", started["user.name"])
 	}
@@ -450,10 +515,7 @@ func TestServerLoggerWiring(t *testing.T) {
 		t.Errorf("session.id = %v, want the session it identifies", started["session.id"])
 	}
 
-	record := awaitRecord(t, records)
-	if record["otel.event.name"] != "session.end" {
-		t.Fatalf("the second record is %v, want the session ending", record["otel.event.name"])
-	}
+	record := awaitEventRecord(t, records, "session.end")
 	if record["user.name"] != "vlab" {
 		t.Errorf("user.name = %v, want the name the client offered", record["user.name"])
 	}

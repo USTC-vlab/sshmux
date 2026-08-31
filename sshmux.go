@@ -585,6 +585,7 @@ func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *conn
 }
 
 func (s *Server) Start() error {
+	starting := time.Now()
 	// set up the metrics exporters before serving any connection
 	if err := s.Metrics.Start(); err != nil {
 		return err
@@ -637,6 +638,9 @@ func (s *Server) Start() error {
 	s.listener = listener
 	s.wg.Add(1)
 
+	s.Logger.LogAttrs(s.ctx, slog.LevelInfo, "sshmux started",
+		s.Logger.serverStartAttributes(listener.Addr(), time.Since(starting))...)
+
 	// main handler loop
 	go s.serve()
 	return nil
@@ -655,6 +659,7 @@ func (s *Server) Wait() {
 }
 
 func (s *Server) Shutdown() {
+	stopping := time.Now()
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -665,8 +670,12 @@ func (s *Server) Shutdown() {
 	// flush the final records and measurements once no handler can emit anymore
 	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
-	// The logger goes last, being what the other two report through.
 	s.Metrics.Shutdown(ctx)
+
+	s.Logger.LogAttrs(ctx, slog.LevelInfo, "sshmux stopped",
+		s.Logger.serverStopAttributes(s.Addr(), time.Since(stopping))...)
+
+	// The logger goes last, being what the other two report through.
 	s.Tracer.Shutdown(ctx)
 	s.Logger.Shutdown(ctx)
 }
