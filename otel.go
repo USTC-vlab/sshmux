@@ -29,6 +29,7 @@ const (
 	envOTLPProtocol        = "OTEL_EXPORTER_OTLP_PROTOCOL"
 	envOTLPMetricsProtocol = "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
 	envOTLPTracesProtocol  = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
+	envOTLPLogsProtocol    = "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"
 )
 
 // connectionInfo is the per-connection state the metrics and the spans are
@@ -48,6 +49,18 @@ type connectionInfo struct {
 	ClientHost string
 	ClientPort uint16
 	ClientPeer net.Addr
+	// SessionID identifies the SSH session, which is what the auth API is told
+	// as `session_id`. It is set once the SSH transport is up.
+	SessionID string
+	// HandshakeStart and HandshakeEnd are when the downstream handshake and the
+	// upstream dial began and concluded, which is the session's own span within
+	// the connection carrying it. Both are zero until the SSH transport is up.
+	HandshakeStart time.Time
+	HandshakeEnd   time.Time
+	// UpstreamPeer is the address the upstream connection ends at, which is the
+	// PROXY protocol hop where one is configured and the backend otherwise, and
+	// is resolved where UpstreamHost is whatever the auth API named.
+	UpstreamPeer net.Addr
 	// ProtocolVersion is the SSH protocol version the client identified with,
 	// e.g. "2.0" out of "SSH-2.0-OpenSSH_9.9".
 	ProtocolVersion string

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"testing"
@@ -225,6 +226,19 @@ func checkLoggerTOML(t *testing.T, config Config) {
 	if otlp.TimeoutSeconds != 5 || len(otlp.Headers) != 1 {
 		t.Errorf("logger.otlp = %+v", otlp)
 	}
+	// The group must not merely parse: it has to build a working sink set. A UDP
+	// dial binds an ephemeral local port and needs no listener, so this neither
+	// occupies the fixture's port nor depends on anything running on it.
+	built, err := makeLogger(logger)
+	if err != nil {
+		t.Fatalf("the logger configuration does not build: %v", err)
+	}
+	if _, ok := built.Handler().(multiHandler); !ok {
+		t.Errorf("handler = %T, want both sinks", built.Handler())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
+	defer cancel()
+	built.Shutdown(ctx)
 }
 
 // checkTracerTOML covers every key of the tracer group.

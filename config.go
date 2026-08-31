@@ -170,13 +170,13 @@ func (c *AttributeConvention) UnmarshalText(text []byte) error {
 type LogRecordShape string
 
 const (
-	// LogRecordShapeOTel writes the record as the OpenTelemetry Logs Data Model
-	// names its fields, which is what the attributes inside are named after
-	// unless the convention says otherwise.
-	LogRecordShapeOTel LogRecordShape = "otel"
-	// LogRecordShapeECS writes an Elastic Common Schema document, for the log
-	// shippers that read one without being taught anything.
+	// LogRecordShapeECS writes an Elastic Common Schema document, which the log
+	// shippers a datagram is read by take without being taught anything.
 	LogRecordShapeECS LogRecordShape = "ecs"
+	// LogRecordShapeOTel writes the JSON serialization of the OpenTelemetry
+	// Logs Data Model, which is a good deal larger, being what an OTLP export
+	// of the same record holds rather than a document meant to be read.
+	LogRecordShapeOTel LogRecordShape = "otel"
 	// LogRecordShapeLegacy is the shape sshmux wrote before it followed a
 	// schema, which Vlab's log collector parses. It is frozen.
 	LogRecordShapeLegacy LogRecordShape = "legacy"
@@ -184,12 +184,12 @@ const (
 
 func (s *LogRecordShape) UnmarshalText(text []byte) error {
 	switch value := LogRecordShape(text); value {
-	case "", LogRecordShapeOTel, LogRecordShapeECS, LogRecordShapeLegacy:
+	case "", LogRecordShapeECS, LogRecordShapeOTel, LogRecordShapeLegacy:
 		*s = value
 		return nil
 	default:
 		return fmt.Errorf("unsupported logger shape %q, want %q, %q or %q",
-			value, LogRecordShapeOTel, LogRecordShapeECS, LogRecordShapeLegacy)
+			value, LogRecordShapeECS, LogRecordShapeOTel, LogRecordShapeLegacy)
 	}
 }
 
