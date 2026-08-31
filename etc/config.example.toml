@@ -23,7 +23,27 @@ invalid-username-message = "Invalid username %s. Please check https://vlab.ustc.
 
 [logger]
 enabled = true
-endpoint = "udp://127.0.0.1:5556"
+service-name = "sshmux"
+attributes = [
+    { name = "deployment.environment.name", value = "production" },
+]
+
+[logger.udp]
+enabled = true
+address = "127.0.0.1:5556"
+# The datagram is an Elastic Common Schema document unless another shape is
+# asked for; "legacy" writes the one sshmux wrote before it followed a schema.
+shape = "legacy"
+
+[logger.otlp]
+enabled = true
+protocol = "http"
+# The signal path is not appended: point this at the full logs endpoint.
+endpoint = "http://127.0.0.1:4318/v1/logs"
+timeout-seconds = 10
+headers = [
+    { name = "Authorization", value = "ApiKey 12345678" },
+]
 
 [metrics]
 enabled = true
