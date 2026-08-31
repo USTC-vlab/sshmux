@@ -569,6 +569,7 @@ func readSessionFields(record slog.Record, names attributeNames) sessionFields {
 		switch attr.Key {
 		case string(names.clientAddress), string(names.clientPort),
 			string(names.sshmuxUpstreamAddress), string(names.sshmuxUpstreamPort),
+			string(names.sessionID),
 			string(names.userName), string(names.eventOutcome), string(names.errorType),
 			string(names.sshmuxHandshakeStart), string(names.eventEnd):
 			fields[attr.Key] = attr.Value
@@ -612,6 +613,9 @@ func (f sessionFields) legacyAttributes(names attributeNames) []slog.Attr {
 		return nil
 	}
 	var attrs []slog.Attr
+	if session, ok := f[string(names.sessionID)]; ok {
+		attrs = append(attrs, slog.String("session_id", session.String()))
+	}
 	if connect, ok := f.unixTime(string(names.sshmuxHandshakeStart)); ok {
 		attrs = append(attrs, slog.Int64("connect_time", connect))
 	}

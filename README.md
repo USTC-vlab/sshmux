@@ -119,6 +119,7 @@ A shape names the document alone, so `shape = "ecs"` under the default `conventi
 
 | Attribute                         | `legacy`                                                    |
 | --------------------------------- | ----------------------------------------------------------- |
+| `session.id`                      | `session_id`                                                |
 | `client.address`, `client.port`   | `remote_ip`, as `host:port`                                 |
 | `sshmux.upstream.address`, `sshmux.upstream.port` | `host_ip`, as `host:port`                   |
 | `user.name`                       | `username`                                                  |

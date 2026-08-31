@@ -562,6 +562,8 @@ func TestLogRecordLegacyShape(t *testing.T) {
 		// PROXY protocol hop makes different from the backend the API named.
 		"host_ip":       "192.0.2.200:2222",
 		"authenticated": true,
+		// The session an auth request can be joined to a record by.
+		"session_id": "c3NobXV4LXRlc3Qtc2Vzc2lvbg==",
 	}
 	for key, value := range want {
 		if record[key] != value {
@@ -569,7 +571,7 @@ func TestLogRecordLegacyShape(t *testing.T) {
 		}
 	}
 	// The schema's names must be gone, not merely supplemented.
-	for _, key := range []string{"client.address", "server.address", "user.name", "event.outcome", "event.start"} {
+	for _, key := range []string{"client.address", "server.address", "user.name", "event.outcome", "event.start", "session.id"} {
 		if _, ok := record[key]; ok {
 			t.Errorf("%s is still present in the legacy shape", key)
 		}
