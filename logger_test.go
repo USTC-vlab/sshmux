@@ -410,7 +410,21 @@ func TestServerLoggerWiring(t *testing.T) {
 		client.Close()
 	}
 
+	started := awaitRecord(t, records)
+	if started["otel.event.name"] != "session.start" {
+		t.Fatalf("the first record is %v, want the session starting", started["otel.event.name"])
+	}
+	if _, ok := started["user.name"]; ok {
+		t.Errorf("user.name = %v, want nobody authenticated yet", started["user.name"])
+	}
+	if _, ok := started["session.id"].(string); !ok {
+		t.Errorf("session.id = %v, want the session it identifies", started["session.id"])
+	}
+
 	record := awaitRecord(t, records)
+	if record["otel.event.name"] != "session.end" {
+		t.Fatalf("the second record is %v, want the session ending", record["otel.event.name"])
+	}
 	if record["user.name"] != "vlab" {
 		t.Errorf("user.name = %v, want the name the client offered", record["user.name"])
 	}
@@ -660,6 +674,64 @@ func TestLegacyShapeBracketsTheTransport(t *testing.T) {
 	// not what this field has ever held.
 	if record["connect_time"] == float64(1700000000) {
 		t.Error("connect_time is the time the connection was accepted")
+	}
+}
+
+// TestLogRecordSessionStart covers the event a session reports when its SSH
+// transport comes up: it identifies the session and names what is known of the
+// connection by then, which is neither a user nor a backend.
+func TestLogRecordSessionStart(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	start := time.Unix(1700000000, 0)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "SSH proxy session started",
+		logger.sessionStartAttributes(connectionInfo{
+			SessionID:       "c3NobXV4LXRlc3Qtc2Vzc2lvbg==",
+			ClientHost:      "192.0.2.10",
+			ClientPort:      54321,
+			ClientPeer:      &net.TCPAddr{IP: net.IPv4(198, 51, 100, 7), Port: 40000},
+			ProtocolVersion: "2.0",
+		}, start)...)
+
+	record := awaitRecord(t, records)
+	want := map[string]any{
+		"otel.event.name":           "session.start",
+		"session.id":                "c3NobXV4LXRlc3Qtc2Vzc2lvbg==",
+		"event.start":               "2023-11-14T22:13:20Z",
+		"event.kind":                "event",
+		"network.protocol.name":     "ssh",
+		"network.protocol.version":  "2.0",
+		"client.address":            "192.0.2.10",
+		"sshmux.downstream.address": "198.51.100.7",
+	}
+	for key, value := range want {
+		if record[key] != value {
+			t.Errorf("%s = %v, want %v", key, record[key], value)
+		}
+	}
+	// Nothing is known of either yet, and the session has not ended.
+	for _, key := range []string{"user.name", "server.address", "event.end", "event.duration", "event.outcome"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want it unknown when a session begins", key, value)
+		}
+	}
+}
+
+// TestLegacyShapeWritesOnlyTheSessionEnd checks that the shape keeps to the one
+// event it has a document for, rather than writing every event as a session.
+func TestLegacyShapeWritesOnlyTheSessionEnd(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeLegacy)
+	start := time.Unix(1700000000, 0)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "SSH proxy session started",
+		logger.sessionStartAttributes(testSession, start)...)
+
+	record := awaitRecord(t, records)
+	if record["msg"] != "SSH proxy session started" {
+		t.Errorf("msg = %v, want the record still written", record["msg"])
+	}
+	for _, key := range []string{"session_id", "connect_time", "remote_ip", "client_type", "host_ip"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want no session document for an event that is not one", key, value)
+		}
 	}
 }
 

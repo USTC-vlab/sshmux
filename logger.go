@@ -221,7 +221,7 @@ func (l *Logger) closeConn() {
 func (l *Logger) sessionAttributes(info connectionInfo, err error, connect, disconnect time.Time) []slog.Attr {
 	names := l.attrs
 	attrs := []slog.Attr{
-		slog.String(string(names.eventName), sessionEventName),
+		slog.String(string(names.eventName), sessionEndEventName),
 		slog.String(string(names.eventKind), "event"),
 		slog.Any(string(names.eventCategory), []string{"network"}),
 		slog.Any(string(names.eventType), []string{"connection", "end"}),
@@ -275,10 +275,29 @@ func slogAttribute(attr attribute.KeyValue) slog.Attr {
 	}
 }
 
-// sessionEventName is the class of event one record is. The conventions define
-// it for a session that has concluded, which is what a record describes, and
-// require the session's own identifier alongside it.
-const sessionEventName = "session.end"
+// The classes of event a record is one of. The conventions define both for a
+// session, and require the session's own identifier alongside either.
+const (
+	sessionStartEventName = "session.start"
+	sessionEndEventName   = "session.end"
+)
+
+// sessionStartAttributes names a session that has begun, which is as much of
+// the connection as is known once its SSH transport is up: no user has been
+// authenticated yet, and no backend named.
+func (l *Logger) sessionStartAttributes(info connectionInfo, start time.Time) []slog.Attr {
+	names := l.attrs
+	attrs := []slog.Attr{
+		slog.String(string(names.eventName), sessionStartEventName),
+		slog.String(string(names.eventKind), "event"),
+		slog.Any(string(names.eventCategory), []string{"network"}),
+		slog.Any(string(names.eventType), []string{"connection", "start"}),
+		slog.Time(string(names.eventStart), start.UTC()),
+	}
+	attrs = append(attrs, slogAttributes(names.connectionAttributes(info))...)
+	return append(attrs, slogAttributes(socketAttributes(info.ClientPeer,
+		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...)
+}
 
 // eventNameProcessor moves the class of event a record is into the field the
 // data model keeps it in, out of the attribute a logging library has to carry
@@ -612,7 +631,7 @@ func (f sessionFields) legacyAttributes(names attributeNames) []slog.Attr {
 	// The shape describes a session that has ended, which is the only event
 	// sshmux wrote when it was the only shape. Anything else is left with
 	// nothing but its message, rather than written as a session it is not.
-	if f[string(names.eventName)].String() != sessionEventName {
+	if f[string(names.eventName)].String() != sessionEndEventName {
 		return nil
 	}
 	var attrs []slog.Attr
