@@ -318,14 +318,16 @@ The metric names below are the OpenTelemetry ones. The Prometheus endpoint rende
 | ---------------------------- | --------------- | -------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
 | `sshmux.connections`         | Counter         | `{connection}` | —                                              | Connections accepted by `sshmux`.                                 |
 | `sshmux.connections.active`  | UpDownCounter   | `{connection}` | —                                              | Connections currently being served.                               |
-| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions.          |
-| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close. |
-| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency. |
+| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions. |
+| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close. |
+| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency. |
 | `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Requests sent to the auth API.         |
 | `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Auth API request latency.              |
 | `sshmux.upstream.connections` | Counter        | `{connection}` | `event.outcome`, `error.type`                  | Connection attempts to upstream SSH servers.                      |
 
 `event.outcome` is either `success` or `failure`. On failure, `error.type` classifies the error as one of the [error classes](#error-classes), which are a closed set so that a misbehaving client cannot blow up the time series cardinality.
+
+`sshmux.upstream.role` is what the auth API named on the upstream it returned, empty where it named none, and is on every series rather than only the ones with a role: a label a series sometimes carries is two shapes of series. Its values are not a closed set, but they are the operator's own auth API's to choose rather than a client's to inflate, so how many there are is a matter of design. Which host `server.address` holds does not answer the same question, and is not there at all once [connection grouping](#connection-grouping) is off.
 
 For `sshmux.sessions` and `sshmux.session.duration`, `event.outcome` reports whether the session was *established*: an SSH client ends a healthy session by disconnecting, so how a session terminated once it was up is not counted against it. Use `sshmux.handshake.duration` to tell apart where an unestablished session failed.
 

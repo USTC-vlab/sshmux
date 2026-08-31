@@ -794,7 +794,7 @@ func testUpstreamMetrics(t *testing.T, metrics *Metrics) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf(`sshmux_sessions_total{event_outcome="success",server_address=%q,server_port="%d",user_name=%q} 1`,
+	want := fmt.Sprintf(`sshmux_sessions_total{event_outcome="success",server_address=%q,server_port="%d",sshmux_upstream_role="",user_name=%q} 1`,
 		sshdServerAddr.IP.String(), sshdServerAddr.Port, currentUser.Username)
 	if body := scrapeUntil(t, metrics, want); !strings.Contains(body, want) {
 		t.Errorf("scrape output does not contain %q:\n%s", want, body)

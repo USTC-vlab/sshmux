@@ -262,6 +262,27 @@ func (n attributeNames) authMethodAttributes(info connectionInfo) []attribute.Ke
 	return named(attrs)
 }
 
+// connectionMetricAttributes names the dimensions the connection metrics carry:
+// the role on every series, and the ones the grouping adds where it is on.
+//
+// Unlike a record, which names a role only where there is one, every series
+// carries it: a label a series sometimes has is two shapes of series. The
+// values are the auth API's to choose, and it is the operator's own, so the
+// cardinality is theirs by design rather than a client's to inflate. For the
+// same reason a dimension not yet known is recorded as unknownAttributeValue
+// rather than left out.
+func (n attributeNames) connectionMetricAttributes(info connectionInfo, grouped bool) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{n.sshmuxUpstreamRole.String(info.UpstreamRole)}
+	if grouped {
+		attrs = append(attrs,
+			n.userName.String(valueOrDefault(info.Username, unknownAttributeValue)),
+			n.serverAddress.String(valueOrDefault(info.UpstreamHost, unknownAttributeValue)),
+			n.serverPort.Int(int(info.UpstreamPort)),
+		)
+	}
+	return named(attrs)
+}
+
 // named drops the attributes the convention has no name for, which it resolves
 // to an empty key. Every builder returns through it, so that a sink takes what
 // it is given.

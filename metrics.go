@@ -367,17 +367,10 @@ func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, e
 	m.authDuration.Record(ctx, duration.Seconds(), set)
 }
 
-// connectionAttributeSet combines the outcome of a connection with the two
-// dimensions the connection metrics are grouped by, unless the grouping has
-// been turned off.
+// connectionAttributeSet combines the outcome of a connection with the
+// dimensions the connection metrics carry.
 func (m *Metrics) connectionAttributeSet(info connectionInfo, err error) attribute.Set {
-	attrs := m.attrs.outcomeAttributes(err)
-	if m.groupConnections {
-		attrs = append(attrs,
-			m.attrs.userName.String(valueOrDefault(info.Username, unknownAttributeValue)),
-			m.attrs.serverAddress.String(valueOrDefault(info.UpstreamHost, unknownAttributeValue)),
-			m.attrs.serverPort.Int(int(info.UpstreamPort)),
-		)
-	}
+	attrs := append(m.attrs.outcomeAttributes(err),
+		m.attrs.connectionMetricAttributes(info, m.groupConnections)...)
 	return attribute.NewSet(attrs...)
 }
