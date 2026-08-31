@@ -92,7 +92,8 @@ func (auth *LegacyAuthenticator) Auth(ctx context.Context, request AuthRequest, 
 	if slices.Contains(auth.UsernamePolicy.InvalidUsernames, username) {
 		// 15: SSH_DISCONNECT_ILLEGAL_USER_NAME
 		msg := fmt.Sprintf(auth.UsernamePolicy.InvalidUsernameMessage, username)
-		failure := AuthFailure{Message: msg, Reason: 15, Disconnect: true}
+		reason := uint32(15)
+		failure := AuthFailure{Message: msg, Reason: &reason, Disconnect: true}
 		return 403, &AuthResponse{Failure: &failure}, nil
 	}
 	if request.Method == "publickey" {

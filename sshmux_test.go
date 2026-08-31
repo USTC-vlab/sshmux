@@ -1002,9 +1002,13 @@ func testSpanTree(t *testing.T, spans []*tracev1.Span) {
 			"client.address", "client.port",
 			"network.peer.address", "network.peer.port",
 		},
-		"ssh handshake":     {"session.id"},
-		"authenticate user": {"server.address", "server.port", "network.peer.address", "network.peer.port"},
-		"connect upstream":  {"server.address", "server.port", "network.peer.address", "network.peer.port"},
+		"ssh handshake": {"session.id"},
+		"authenticate user": {
+			"server.address", "server.port",
+			"network.peer.address", "network.peer.port",
+			"sshmux.auth.method", "sshmux.auth.status_code",
+		},
+		"connect upstream": {"server.address", "server.port", "network.peer.address", "network.peer.port"},
 	}
 	for name, keys := range wantAttributes {
 		span := byName[name]

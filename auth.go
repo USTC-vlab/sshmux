@@ -41,9 +41,20 @@ type AuthChallengeField struct {
 }
 
 type AuthFailure struct {
-	Message    string `json:"message"`
-	Disconnect bool   `json:"disconnect,omitempty"`
-	Reason     uint32 `json:"reason,omitempty"`
+	Message    string  `json:"message"`
+	Disconnect bool    `json:"disconnect,omitempty"`
+	Reason     *uint32 `json:"reason,omitempty"`
+}
+
+// parseReasonCode reads the SSH disconnect reason a refusal closes the
+// connection with. RFC 4250 assigns reasons from one, so zero names none as
+// surely as an absent field does.
+func parseReasonCode(failure AuthFailure) uint32 {
+	if failure.Reason == nil || *failure.Reason == 0 {
+		// 11: SSH_DISCONNECT_BY_APPLICATION
+		return 11
+	}
+	return *failure.Reason
 }
 
 type AuthUpstream struct {
@@ -149,8 +160,7 @@ func (a *instrumentedAuthenticator) Auth(ctx context.Context, request AuthReques
 	ctx, span := a.tracer.Start(ctx, "authenticate user", spanKindClient)
 	status, response, err := a.inner.Auth(ctx, request, username)
 	endSpan(span, err, append(a.tracer.serverAttributes(a.server),
-		a.tracer.attrs.sshmuxAuthMethod.String(request.Method),
-		a.tracer.attrs.sshmuxAuthStatus.Int(status))...)
+		a.tracer.authAnswerAttributes(request.Method, status, response)...)...)
 	a.metrics.AuthFinished(ctx, request.Method, status, err, time.Since(start))
 	return status, response, err
 }
