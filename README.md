@@ -129,7 +129,7 @@ A shape names the document alone, so `shape = "ecs"` under the default `conventi
 
 Both of its addresses are the logical ends: `remote_ip` is the client the [PROXY protocol](#proxy-protocol-settings) header claims, and `host_ip` the backend the auth API named. Where a hop sits on either side, the address the connection really ends at is `sshmux.downstream.*` or `sshmux.upstream.*`, which this shape has no name for.
 
-This shape is frozen. It gains no field beyond the table above, whatever else a record comes to carry, so that the consumers written against it keep reading exactly what they always have. A field it has no name for is left out, and a record that is not a session is written without the shape at all.
+This shape is frozen. It gains no field beyond the table above, whatever else a record comes to carry, so that the consumers written against it keep reading exactly what they always have. A field it has no name for is left out, and a record other than `session.end`, the only event `sshmux` had when this was its only shape, is written without the shape at all.
 
 #### Logger OTLP Settings
 

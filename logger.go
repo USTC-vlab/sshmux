@@ -567,7 +567,8 @@ func readSessionFields(record slog.Record, names attributeNames) sessionFields {
 	fields := sessionFields{}
 	record.Attrs(func(attr slog.Attr) bool {
 		switch attr.Key {
-		case string(names.clientAddress), string(names.clientPort),
+		case string(names.eventName),
+			string(names.clientAddress), string(names.clientPort),
 			string(names.serverAddress), string(names.serverPort), string(names.sessionID),
 			string(names.userName), string(names.eventOutcome), string(names.errorType),
 			string(names.sshmuxHandshakeStart), string(names.eventEnd):
@@ -608,7 +609,10 @@ func (f sessionFields) hostPort(host, port string) (string, bool) {
 // record carrying none of the fields above is not a session, so it is left
 // with nothing but its message.
 func (f sessionFields) legacyAttributes(names attributeNames) []slog.Attr {
-	if len(f) == 0 {
+	// The shape describes a session that has ended, which is the only event
+	// sshmux wrote when it was the only shape. Anything else is left with
+	// nothing but its message, rather than written as a session it is not.
+	if f[string(names.eventName)].String() != sessionEventName {
 		return nil
 	}
 	var attrs []slog.Attr

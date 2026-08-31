@@ -755,6 +755,7 @@ func TestLegacyShapeIsFrozen(t *testing.T) {
 func TestLegacyWritesOnlyTheFieldsPresent(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeLegacy)
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "SSH proxy session",
+		slog.String("otel.event.name", "session.end"),
 		slog.String("client.address", "192.0.2.10"),
 		slog.String("event.outcome", "failure"))
 
