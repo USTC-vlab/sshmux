@@ -966,10 +966,11 @@ func testSpanTree(t *testing.T, spans []*tracev1.Span) {
 	wantAttributes := map[string][]string{
 		"establish ssh session": {
 			"network.protocol.name", "network.protocol.version",
-			"user.name",
+			"session.id", "user.name",
 			"client.address", "client.port",
 			"network.peer.address", "network.peer.port",
 		},
+		"ssh handshake":     {"session.id"},
 		"authenticate user": {"server.address", "server.port", "network.peer.address", "network.peer.port"},
 		"connect upstream":  {"server.address", "server.port", "network.peer.address", "network.peer.port"},
 	}

@@ -10,7 +10,6 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"slices"
-	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -147,9 +146,9 @@ func endSpan(span trace.Span, err error, attrs ...attribute.KeyValue) {
 	span.End()
 }
 
-// setSpanAttributes records attrs on span, dropping the ones a convention has
-// no name for and so left with an empty key. Every attribute sshmux records
-// reaches a span through here.
+// setSpanAttributes records attrs on span. The builders drop what a convention
+// has no name for, and this is the backstop for an attribute assembled
+// anywhere else, since every one sshmux records reaches a span through here.
 func setSpanAttributes(span trace.Span, attrs []attribute.KeyValue) {
 	attrs = slices.DeleteFunc(attrs, func(attr attribute.KeyValue) bool { return attr.Key == "" })
 	if len(attrs) > 0 {
@@ -157,53 +156,22 @@ func setSpanAttributes(span trace.Span, attrs []attribute.KeyValue) {
 	}
 }
 
-// connectionSpanAttributes reports the parts of a connection's identity that
-// are known. Unlike the metrics, an unknown value is left off rather than
-// recorded as "unknown", since a span has no cardinality budget to protect.
+// connectionSpanAttributes names a connection for a span, under the convention
+// the tracer was configured with.
 func (t *Tracer) connectionSpanAttributes(info connectionInfo) []attribute.KeyValue {
-	attrs := []attribute.KeyValue{t.attrs.networkProtocolName.String("ssh")}
-	if info.ProtocolVersion != "" {
-		attrs = append(attrs, t.attrs.networkProtocolVersion.String(info.ProtocolVersion))
-	}
-	if info.Username != "" {
-		attrs = append(attrs, t.attrs.userName.String(info.Username))
-	}
-	if info.ClientHost != "" {
-		attrs = append(attrs, t.attrs.clientAddress.String(info.ClientHost),
-			t.attrs.clientPort.Int(int(info.ClientPort)))
-	}
-	if info.UpstreamHost != "" {
-		attrs = append(attrs, t.attrs.serverAddress.String(info.UpstreamHost),
-			t.attrs.serverPort.Int(int(info.UpstreamPort)))
-	}
-	return attrs
+	return t.attrs.connectionAttributes(info)
 }
 
-// serverAttributes names the service a client span called, taking the port a
-// URL leaves out from its scheme.
+// serverAttributes names the service a client span called.
 func (t *Tracer) serverAttributes(server *url.URL) []attribute.KeyValue {
-	if server == nil || server.Hostname() == "" {
-		return nil
-	}
-	attrs := []attribute.KeyValue{t.attrs.serverAddress.String(server.Hostname())}
-	port := server.Port()
-	if port == "" {
-		port = portForScheme(server.Scheme)
-	}
-	if number, err := strconv.Atoi(port); err == nil {
-		attrs = append(attrs, t.attrs.serverPort.Int(number))
-	}
-	return attrs
+	return t.attrs.serverAttributes(server)
 }
 
-func portForScheme(scheme string) string {
-	switch scheme {
-	case "http":
-		return "80"
-	case "https":
-		return "443"
-	}
-	return ""
+// peerAttributes names the other end of the network connection a span covers:
+// where it was reached from for a server span, and what it reached out to for
+// a client span.
+func (t *Tracer) peerAttributes(peer net.Addr) []attribute.KeyValue {
+	return t.attrs.peerAttributes(peer)
 }
 
 // tracePeer arranges for the address an HTTP request ends up connected to be
@@ -218,20 +186,6 @@ func (t *Tracer) tracePeer(ctx context.Context) context.Context {
 			setSpanAttributes(span, t.peerAttributes(info.Conn.RemoteAddr()))
 		},
 	})
-}
-
-// peerAttributes names the other end of the network connection a span covers:
-// where it was reached from for a server span, and what it reached out to for
-// a client span.
-func (t *Tracer) peerAttributes(peer net.Addr) []attribute.KeyValue {
-	tcp, ok := peer.(*net.TCPAddr)
-	if !ok {
-		return nil
-	}
-	return []attribute.KeyValue{
-		t.attrs.networkPeerAddress.String(tcp.IP.String()),
-		t.attrs.networkPeerPort.Int(tcp.Port),
-	}
 }
 
 // Inject writes the trace context of ctx into an outgoing request's headers,

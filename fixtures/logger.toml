@@ -1,0 +1,30 @@
+address = "0.0.0.0:8022"
+
+[ssh]
+host-keys = [{ path = "fixtures/ssh_host_ed25519_key" }]
+
+[auth]
+endpoint = "http://127.0.0.1:5000"
+version = "v1"
+
+[logger]
+enabled = true
+convention = "ecs"
+service-name = "sshmux-fixture"
+attributes = [
+    { name = "deployment.environment.name", value = "staging" },
+]
+
+[logger.udp]
+enabled = true
+address = "127.0.0.1:5557"
+shape = "legacy"
+
+[logger.otlp]
+enabled = true
+protocol = "http"
+endpoint = "http://127.0.0.1:4318/v1/logs"
+timeout-seconds = 5
+headers = [
+    { name = "Authorization", value = "ApiKey 12345678" },
+]

@@ -70,12 +70,67 @@ Recovery settings configures Vlab recovery service support of `sshmux` for `lega
 
 ### Logger Settings
 
-Logger settings configures the logger behavior of `sshmux`. They are grouped under `logger` in the TOML file.
+Logger settings configure the session logging of `sshmux`, which is described under [Logs](#logs). They are grouped under `logger` in the TOML file. At least one of `logger.udp` and `logger.otlp` must be enabled when `logger.enabled` is `true`.
 
-| Key        | Type     | Description                                                                   | Required                      | Example                  |
-| ---------- | -------- | ----------------------------------------------------------------------------- | ----------------------------- | ------------------------ |
-| `enabled`  | `bool`   | Whether the logger is enabled. Defaults to `false`.                           | No                            | `true`                   |
-| `endpoint` | `string` | Endpoint URL that `sshmux` will log onto. Only `udp` scheme is supported now. | If `logger.enabled` is `true` | `"udp://127.0.0.1:5556"` |
+| Key            | Type                  | Description                                                                                | Required | Example                              |
+| -------------- | --------------------- | ------------------------------------------------------------------------------------------ | -------- | ------------------------------------ |
+| `enabled`      | `bool`                | Whether the logger is enabled. Defaults to `false`.                                        | No       | `true`                               |
+| `convention`   | `string`              | Schema the attributes are named after, `"default"` or `"ecs"`. Defaults to `"default"`. See [Attribute Conventions](#attribute-conventions). | No | `"ecs"` |
+| `service-name` | `string`              | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                    | No       | `"sshmux-vlab"`                      |
+| `attributes`   | `[]ResourceAttribute` | Extra resource attributes attached to every record.                                        | No       | `[{ name = "env", value = "prod" }]` |
+
+`service-name` and `attributes` fall back to `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`, and describe the resource. The OTLP sink always carries it, and over UDP only the `otel` shape has anywhere to put it.
+
+The convention names the attributes for both sinks alike. What differs between them is the document those attributes are written into, which OTLP defines for itself and `logger.udp.shape` decides for a datagram, so a collector that parses the existing fields can keep receiving them while an OTLP one is given the schema.
+
+> [!NOTE]
+> `logger.endpoint` is deprecated in favour of `logger.udp`. A `udp://host:port` URL still works and is equivalent to setting `logger.udp.address`, but the two cannot be combined. A configuration still using it defaults that sink to the `legacy` shape, so its collector keeps receiving the document it already parses.
+
+#### Logger UDP Settings
+
+The UDP sink writes one JSON document per datagram. It is configured under `logger.udp` in the TOML file.
+
+| Key       | Type     | Description                                                            | Required | Example            |
+| --------- | -------- | ------------------------------------------------------------------------ | -------- | ------------------ |
+| `enabled` | `bool`   | Whether the UDP sink is enabled. Defaults to `false`.                  | No       | `true`             |
+| `address` | `string` | UDP host and port to send records to. Defaults to `"127.0.0.1:5556"`.  | No       | `"127.0.0.1:5556"` |
+| `shape`   | `string` | Document each datagram is written as, `"ecs"`, `"otel"` or `"legacy"`. Defaults to `"ecs"`, or to `"legacy"` where `logger.endpoint` is set. | No | `"otel"` |
+
+A shape decides what a transport does not define for itself: the document a datagram holds, and what the record's own time, level and message are called inside it. The attributes are named by `logger.convention` whichever document holds them, so the two never contend.
+
+| Shape    | Time                          | Level                               | Message   | Defined by                                                                              |
+| -------- | ----------------------------- | ----------------------------------- | --------- | --------------------------------------------------------------------------------------- |
+| `ecs`    | `@timestamp`, ISO 8601 in UTC | `log.level`                         | `message` | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html)     |
+| `otel`   | `timeUnixNano`                | `severityNumber` and `severityText` | `body`    | the [OpenTelemetry Logs Data Model](https://opentelemetry.io/docs/specs/otel/logs/data-model) |
+| `legacy` | `time`                        | `level`                             | `msg`     | [sshmux's `legacy` shape](#the-legacy-shape)                                            |
+
+`otel` writes the JSON serialization of the data model, as the [file exporter](https://opentelemetry.io/docs/specs/otel/protocol/file-exporter/#examples) writes it, so a datagram carries what an OTLP export of the same record would. Each holds one record, and the fields with nothing to say are left out of it: the dropped-attribute counts, the observed timestamp, the trace flags, and the schema URLs. It is also the only shape with somewhere to put the resource, so the only one `logger.service-name` and `logger.attributes` reach over UDP; the other two write one flat object per datagram.
+
+> [!IMPORTANT]
+> **`otel` is a shape for keeping the OpenTelemetry data model, rarely for reporting logs.** The record nests under a resource and a scope, every value is wrapped in the name of its type, and the resource repeats on each datagram where a file of them would amortize it. That makes it roughly two and a half times the size of the same record in `ecs`, past the payload a standard Ethernet frame carries, so each datagram is fragmented across two IP packets and losing either loses the record.
+>
+> It costs nothing over the loopback address the sink defaults to, where the MTU is far larger. Sending it across a network is better done by pointing the sink at a shipper on the same host and letting that forward — or by `logger.otlp`, which is what carrying these records over a network is for.
+
+A shape names the document alone, so `shape = "ecs"` under the default `convention` produces one that is ECS where a pipeline reads it — `@timestamp`, `log.level` and `message` — while the attributes inside keep their semantic convention names, which such a pipeline has no mappings for and stores as custom fields. Set `logger.convention` to `"ecs"` alongside it where the tooling expects a document that is ECS throughout.
+
+##### The `legacy` Shape
+
+`sshmux` wrote a shape of its own before it followed a schema, which `logger.udp.shape` still writes as `legacy`. It is a different document rather than a different spelling of one: the values change along with the names, and two attributes are joined into each address.
+
+| Attribute                         | `legacy`                                                    |
+| --------------------------------- | ----------------------------------------------------------- |
+| `client.address`, `client.port`   | `remote_ip`, as `host:port`                                 |
+| `sshmux.upstream.address`, `sshmux.upstream.port` | `host_ip`, as `host:port`                   |
+| `user.name`                       | `username`                                                  |
+| `network.protocol.name`           | `client_type`, always `SSH`                                 |
+| `sshmux.handshake.start`, `event.end` | `connect_time`, `disconnect_time`, as Unix seconds      |
+| `event.outcome`, `error.type`      | `authenticated`, and absent where establishing returned an error |
+
+This shape is frozen. It gains no field beyond the table above, whatever else a record comes to carry, so that the consumers written against it keep reading exactly what they always have. A field it has no name for is left out, and a record that is not a session is written without the shape at all.
+
+#### Logger OTLP Settings
+
+The OTLP exporter for logs is configured under `logger.otlp`, whose keys are described in [OTLP Settings](#otlp-settings). Records are exported to the `/v1/logs` path, and read `OTEL_EXPORTER_OTLP_LOGS_*` for the settings left out of the file.
 
 ### Metrics Settings
 
@@ -134,7 +189,7 @@ The OTLP exporter for traces is configured under `tracer.otlp`, whose keys are d
 
 ### OTLP Settings
 
-OTLP settings configure an OTLP push exporter. They are grouped per signal, under `metrics.otlp` and `tracer.otlp` in the TOML file.
+OTLP settings configure an OTLP push exporter. They are grouped per signal, under `logger.otlp`, `metrics.otlp` and `tracer.otlp` in the TOML file.
 
 | Key               | Type           | Description                                                                                                                  | Required                      | Example                     |
 | ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------- |
@@ -173,19 +228,50 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 
 ## Attribute Conventions
 
-`metrics.convention` and `tracer.convention` select how each attribute is named:
+`logger.convention`, `metrics.convention` and `tracer.convention` select how each attribute is named:
 
 | Value | Resolves each attribute against |
 | --- | --- |
 | `default` | the [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/), then the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
 | `ecs` | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
 
-They differ in two attributes, one named apart and one that ECS has no field for:
+They differ in the following attributes:
 
 | Attribute            | `default`                  | `ecs`              |
 | -------------------- | -------------------------- | ------------------ |
 | Application protocol | `network.protocol.name`    | `network.protocol` |
 | Its version          | `network.protocol.version` | dropped            |
+| Class of event       | `otel.event.name`          | `event.action`     |
+
+## Logs
+
+`sshmux` writes one record per session, through the sinks configured in the [Logger Settings](#logger-settings). Both sinks can be enabled at once, so an OTLP collector can be introduced alongside an existing UDP one.
+
+For now, every record is an event of one class, [`session.end`](https://opentelemetry.io/docs/specs/semconv/general/session/), which the semantic conventions define for a session that has concluded and which requires the `session.id` beside it, the SSH session identifier the auth API is told as `session_id`. Over OTLP and in an `otel` document it is the record's own event name; an `ecs` one has no field for it and carries it as `event.action`.
+
+A record names the connection with the attributes the spans carry, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, and leaves out the ones whose values a connection never reached. To those it adds the event: `event.start` and `event.end`, the UTC times the connection was accepted and ended, `event.duration` in nanoseconds, `event.outcome`, which is `success` where the session was established and `failure` otherwise, `error.type` where something went wrong, naming its class from the same closed set the [metrics](#exported-metrics) use, and the ECS categorization `event.kind`, `event.category` and `event.type`, fixed at `event`, `network`, and `connection` with `end`.
+
+It names `sshmux.handshake.start` and `sshmux.handshake.end`, the moments the downstream handshake and the upstream dial began and concluded, which [`sshmux.handshake.duration`](#exported-metrics) measures between. They bracket the session within the connection that `event.start` and `event.end` bracket, the gap before the first being the SSH transport coming up, and the end of them being where a session that came up began being proxied.
+
+It also names the two connections a session is actually made of, against the logical ends above: `sshmux.downstream.address` and `sshmux.downstream.port` for the address the client connected from, and `sshmux.upstream.address` and `sshmux.upstream.port` for the one the upstream connection ends at. Where a [PROXY protocol](#proxy-protocol-settings) hop sits on either side, these are the hop's, while `client.address` is the client the header claims and `server.address` is the backend the auth API named. A span says which end it means by its kind, but one record covers both connections, so `network.peer.address` would not say.
+
+The names above are the `default` convention's, which `ecs` renames as described under [Attribute Conventions](#attribute-conventions). The OTLP sink carries them as the log record's attributes, alongside the resource named by `logger.service-name` and `logger.attributes`, and carries the record's own time, level and message as the fields the data model has for them. The UDP sink writes one JSON document per datagram, in the shape [`logger.udp.shape`](#logger-udp-settings) asks for. Under the default shape and convention, abbreviated to a few of its attributes:
+
+```console
+$ socat UDP-LISTEN:5556 STDOUT
+{"@timestamp":"2026-08-28T03:41:12.664Z","log.level":"INFO","message":"SSH proxy session","otel.event.name":"session.end","event.outcome":"success","network.protocol.name":"ssh","session.id":"3q2+7w==","network.protocol.version":"2.0","user.name":"vlab","client.address":"127.0.0.1","client.port":50227}
+```
+
+The document is ECS where a pipeline reads it, while the attributes keep the names above; set `logger.convention` to `"ecs"` alongside the shape for one that is [ECS throughout](#logger-udp-settings). The same record under `shape = "otel"`, which is [larger than a datagram wants to be](#logger-udp-settings):
+
+```console
+$ socat UDP-LISTEN:5556 STDOUT
+{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"sshmux"}}]},"scopeLogs":[{"scope":{"name":"github.com/USTC-vlab/sshmux"},"logRecords":[{"eventName":"session.end","timeUnixNano":"1756352472664000000","severityNumber":9,"severityText":"INFO","body":{"stringValue":"SSH proxy session"},"attributes":[{"key":"event.outcome","value":{"stringValue":"success"}},{"key":"network.protocol.name","value":{"stringValue":"ssh"}},{"key":"session.id","value":{"stringValue":"3q2+7w=="}},{"key":"network.protocol.version","value":{"stringValue":"2.0"}},{"key":"user.name","value":{"stringValue":"vlab"}},{"key":"client.address","value":{"stringValue":"127.0.0.1"}},{"key":"client.port","value":{"intValue":"50227"}}],"traceId":"7a1e0dd3f9ee40a1b2c3d4e5f6a7b8c9","spanId":"3fbc2d1e4a5b6c7d"}]}]}]}
+```
+
+A connection is recorded once its SSH transport is up, so one that fails before that is counted by `sshmux.connections` without a record being written for it. A handshake that fails afterwards is recorded with the fields known at that point.
+
+Only connections are recorded through these sinks. What the service itself reports — startup, shutdown, and the errors it recovers from — is written to standard error, so a collector receiving these logs sees the traffic through `sshmux` rather than the state of `sshmux` itself.
 
 ## Metrics
 
@@ -242,7 +328,7 @@ Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving 
 | `authenticate user`     | `client`   | `ssh handshake`         | `server.*`, peer, `sshmux.auth.method`, `sshmux.auth.status` | One request to the auth API.                              |
 | `connect upstream`      | `client`   | `ssh handshake`         | `server.*`, peer                                             | Dialling the backend.                                     |
 
-The connection attributes are `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, naming the client that connected and the backend the auth API picked. Those are the logical ends, the ones behind any intermediary. A span's peer, `network.peer.address` and `network.peer.port`, is the address at the other end of the network connection the span itself covers, which its kind fixes — the client that reached `sshmux` for a server span, the service called for a client span, and neither for an internal one. It differs from the logical end where a PROXY protocol hop sits in between, and is missing only from a dial that never connected.
+The connection attributes are `session.id`, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, naming the session, the client that connected and the backend the auth API picked. Those are the logical ends, the ones behind any intermediary. A span's peer, `network.peer.address` and `network.peer.port`, is the address at the other end of the network connection the span itself covers, which its kind fixes — the client that reached `sshmux` for a server span, the service called for a client span, and neither for an internal one. It differs from the logical end where a PROXY protocol hop sits in between, and is missing only from a dial that never connected.
 
 The kinds are also what a collector builds a service graph from: `sshmux` serves the session, and calls the auth API and the backend on its behalf.
 

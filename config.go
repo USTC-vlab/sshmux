@@ -37,8 +37,23 @@ type HTTPHeaderConfig struct {
 }
 
 type LoggerConfig struct {
-	Enabled  bool   `toml:"enabled"`
+	Enabled     bool                      `toml:"enabled"`
+	Convention  AttributeConvention       `toml:"convention,omitempty"`
+	ServiceName string                    `toml:"service-name,omitempty"`
+	Attributes  []ResourceAttributeConfig `toml:"attributes,omitempty"`
+	UDP         LoggerUDPConfig           `toml:"udp"`
+	OTLP        OTLPConfig                `toml:"otlp"`
+	// Endpoint is the deprecated spelling of the UDP sink, kept working as
+	// `udp://host:port`. Prefer `logger.udp`.
 	Endpoint string `toml:"endpoint,omitempty"`
+}
+
+type LoggerUDPConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Address string `toml:"address,omitempty"`
+	// Shape is the document the datagram is written as. It says nothing about
+	// what the attributes are called, which `logger.convention` decides.
+	Shape LogRecordShape `toml:"shape,omitempty"`
 }
 
 type ProxyProtocolConfig struct {
@@ -143,8 +158,38 @@ func (c *AttributeConvention) UnmarshalText(text []byte) error {
 		*c = value
 		return nil
 	default:
-		return fmt.Errorf("unsupported metrics convention %q, want %q or %q",
+		return fmt.Errorf("unsupported convention %q, want %q or %q",
 			value, AttributeConventionDefault, AttributeConventionECS)
+	}
+}
+
+// LogRecordShape names the document a JSON log sink writes. It is a separate
+// question from what the attributes are called, which the convention answers
+// for every sink alike: the shape is only what a transport does not define for
+// itself, which for a datagram is the record's own time, level and message.
+type LogRecordShape string
+
+const (
+	// LogRecordShapeECS writes an Elastic Common Schema document, which the log
+	// shippers a datagram is read by take without being taught anything.
+	LogRecordShapeECS LogRecordShape = "ecs"
+	// LogRecordShapeOTel writes the JSON serialization of the OpenTelemetry
+	// Logs Data Model, which is a good deal larger, being what an OTLP export
+	// of the same record holds rather than a document meant to be read.
+	LogRecordShapeOTel LogRecordShape = "otel"
+	// LogRecordShapeLegacy is the shape sshmux wrote before it followed a
+	// schema, which Vlab's log collector parses. It is frozen.
+	LogRecordShapeLegacy LogRecordShape = "legacy"
+)
+
+func (s *LogRecordShape) UnmarshalText(text []byte) error {
+	switch value := LogRecordShape(text); value {
+	case "", LogRecordShapeECS, LogRecordShapeOTel, LogRecordShapeLegacy:
+		*s = value
+		return nil
+	default:
+		return fmt.Errorf("unsupported logger shape %q, want %q, %q or %q",
+			value, LogRecordShapeECS, LogRecordShapeOTel, LogRecordShapeLegacy)
 	}
 }
 
