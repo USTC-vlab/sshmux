@@ -829,6 +829,26 @@ func TestLogRecordAuthenticatedByNothing(t *testing.T) {
 	}
 }
 
+// TestLogRecordUpstreamRole covers the label the auth API put on an upstream,
+// which the record carries because the API said it and no address reveals it,
+// and which a session it labelled none on leaves out.
+func TestLogRecordUpstreamRole(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	recovering := testSession
+	recovering.UpstreamRole = "recovery"
+	connect := time.Unix(1700000000, 0)
+	logSessionRecord(logger, recovering, connect, connect.Add(testSessionLength))
+
+	if record := awaitRecord(t, records); record["sshmux.upstream.role"] != "recovery" {
+		t.Errorf("sshmux.upstream.role = %v, want what the API answered", record["sshmux.upstream.role"])
+	}
+
+	logSessionRecord(logger, testSession, connect, connect.Add(testSessionLength))
+	if record := awaitRecord(t, records); record["sshmux.upstream.role"] != nil {
+		t.Errorf("sshmux.upstream.role = %v, want nothing where the API named none", record["sshmux.upstream.role"])
+	}
+}
+
 // TestLegacyShapeIgnoresTheSockets checks that the addresses sshmux is really
 // connected to and from reach the schema's sinks without reaching this one,
 // whose fields are fixed.

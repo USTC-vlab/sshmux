@@ -99,6 +99,9 @@ type attributeNames struct {
 	sshmuxDownstreamPort    attribute.Key
 	sshmuxUpstreamAddress   attribute.Key
 	sshmuxUpstreamPort      attribute.Key
+	// What the auth API said the upstream is to the user, which no address
+	// reveals and sshmux does not interpret.
+	sshmuxUpstreamRole attribute.Key
 }
 
 // defaultAttributeNames resolves each attribute against the OpenTelemetry
@@ -136,6 +139,7 @@ var defaultAttributeNames = attributeNames{
 	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
 	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
 	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
+	sshmuxUpstreamRole:          attribute.Key("sshmux.upstream.role"),
 }
 
 // ecsAttributeNames resolves against the Elastic Common Schema only, which does
@@ -177,6 +181,7 @@ var ecsAttributeNames = attributeNames{
 	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
 	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
 	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
+	sshmuxUpstreamRole:          attribute.Key("sshmux.upstream.role"),
 }
 
 // conventionAttributeNames resolves the configured convention.
@@ -235,6 +240,11 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 		attrs = append(attrs,
 			n.serverAddress.String(info.UpstreamHost),
 			n.serverPort.Int(int(info.UpstreamPort)))
+	}
+	// Only where the API labelled one: an empty role on every session is noise
+	// a datagram pays for.
+	if info.UpstreamRole != "" {
+		attrs = append(attrs, n.sshmuxUpstreamRole.String(info.UpstreamRole))
 	}
 	return named(attrs)
 }
