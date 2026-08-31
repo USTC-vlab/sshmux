@@ -558,10 +558,13 @@ func TestLogRecordLegacyShape(t *testing.T) {
 		"remote_ip":   "192.0.2.10:54321",
 		"client_type": "SSH",
 		"username":    "vlab",
-		// host_ip is the address the upstream connection ends at, which a
-		// PROXY protocol hop makes different from the backend the API named.
-		"host_ip":       "192.0.2.200:2222",
+		// host_ip is the backend the auth API named, as remote_ip is the client
+		// the header claims: both ends of this shape are the logical ones, and
+		// the hop the connection really ends at is 192.0.2.200:2222.
+		"host_ip":       "10.0.0.7:22",
 		"authenticated": true,
+		// The session an auth request can be joined to a record by.
+		"session_id": "c3NobXV4LXRlc3Qtc2Vzc2lvbg==",
 	}
 	for key, value := range want {
 		if record[key] != value {
@@ -569,7 +572,7 @@ func TestLogRecordLegacyShape(t *testing.T) {
 		}
 	}
 	// The schema's names must be gone, not merely supplemented.
-	for _, key := range []string{"client.address", "server.address", "user.name", "event.outcome", "event.start"} {
+	for _, key := range []string{"client.address", "server.address", "user.name", "event.outcome", "event.start", "session.id"} {
 		if _, ok := record[key]; ok {
 			t.Errorf("%s is still present in the legacy shape", key)
 		}
@@ -679,6 +682,9 @@ func TestLegacyShapeIgnoresTheSockets(t *testing.T) {
 	}
 	if record["remote_ip"] != "192.0.2.10:54321" {
 		t.Errorf("remote_ip = %v, want the client the header claims", record["remote_ip"])
+	}
+	if record["host_ip"] != "10.0.0.7:22" {
+		t.Errorf("host_ip = %v, want the backend the auth API named", record["host_ip"])
 	}
 }
 

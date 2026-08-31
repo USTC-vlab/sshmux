@@ -568,7 +568,7 @@ func readSessionFields(record slog.Record, names attributeNames) sessionFields {
 	record.Attrs(func(attr slog.Attr) bool {
 		switch attr.Key {
 		case string(names.clientAddress), string(names.clientPort),
-			string(names.sshmuxUpstreamAddress), string(names.sshmuxUpstreamPort),
+			string(names.serverAddress), string(names.serverPort), string(names.sessionID),
 			string(names.userName), string(names.eventOutcome), string(names.errorType),
 			string(names.sshmuxHandshakeStart), string(names.eventEnd):
 			fields[attr.Key] = attr.Value
@@ -612,6 +612,9 @@ func (f sessionFields) legacyAttributes(names attributeNames) []slog.Attr {
 		return nil
 	}
 	var attrs []slog.Attr
+	if session, ok := f[string(names.sessionID)]; ok {
+		attrs = append(attrs, slog.String("session_id", session.String()))
+	}
 	if connect, ok := f.unixTime(string(names.sshmuxHandshakeStart)); ok {
 		attrs = append(attrs, slog.Int64("connect_time", connect))
 	}
@@ -634,9 +637,9 @@ func (f sessionFields) legacyAttributes(names attributeNames) []slog.Attr {
 	if user, ok := f[string(names.userName)]; ok {
 		attrs = append(attrs, slog.String("username", user.String()))
 	}
-	// host_ip has always been the address the upstream connection ends at, not
-	// the one the auth API named.
-	if host, ok := f.hostPort(string(names.sshmuxUpstreamAddress), string(names.sshmuxUpstreamPort)); ok {
+	// The backend the auth API named, as `remote_ip` is the client the PROXY
+	// protocol header claims: both ends of the shape are the logical ones.
+	if host, ok := f.hostPort(string(names.serverAddress), string(names.serverPort)); ok {
 		attrs = append(attrs, slog.String("host_ip", host))
 	}
 	return append(attrs, slog.Bool("authenticated", true))
