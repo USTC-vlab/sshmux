@@ -74,6 +74,10 @@ type attributeNames struct {
 	eventStart    attribute.Key
 	eventEnd      attribute.Key
 	eventDuration attribute.Key
+	// Why an event happened, which for a session that ended is which of its two
+	// connections ended it: the ordinary answer is the client, the interesting
+	// one the backend.
+	eventReason attribute.Key
 
 	// The method one exchange with the auth API was asked about, which is what
 	// the client offered rather than what authenticated it.
@@ -144,6 +148,7 @@ var defaultAttributeNames = attributeNames{
 	eventStart:                     attribute.Key("event.start"),              // ECS; semconv has no equivalent
 	eventEnd:                       attribute.Key("event.end"),                // ECS; semconv has no equivalent
 	eventDuration:                  attribute.Key("event.duration"),           // ECS; semconv has no equivalent
+	eventReason:                    attribute.Key("event.reason"),             // ECS; semconv has no equivalent
 	sshmuxAuthMethod:               attribute.Key("sshmux.auth.method"),
 	sshmuxAuthStatusCode:           attribute.Key("sshmux.auth.status_code"),
 	sshmuxAuthChallenges:           attribute.Key("sshmux.auth.challenges"),
@@ -190,6 +195,7 @@ var ecsAttributeNames = attributeNames{
 	eventStart:                     attribute.Key("event.start"),
 	eventEnd:                       attribute.Key("event.end"),
 	eventDuration:                  attribute.Key("event.duration"),
+	eventReason:                    attribute.Key("event.reason"),
 	sshmuxAuthMethod:               attribute.Key("sshmux.auth.method"),
 	sshmuxAuthStatusCode:           attribute.Key("sshmux.auth.status_code"),
 	sshmuxAuthChallenges:           attribute.Key("sshmux.auth.challenges"),
@@ -274,6 +280,9 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 	// a datagram pays for.
 	if info.UpstreamRole != "" {
 		attrs = append(attrs, n.sshmuxUpstreamRole.String(info.UpstreamRole))
+	}
+	if info.EndedBy != "" {
+		attrs = append(attrs, n.eventReason.String(info.EndedBy))
 	}
 	return named(attrs)
 }
