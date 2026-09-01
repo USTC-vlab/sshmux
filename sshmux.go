@@ -229,7 +229,23 @@ func (s *Server) handler(conn net.Conn) {
 			err = session.RunPipe()
 		}
 	}
-	if err != nil && err != io.EOF {
+	// A session ends when one of its two connections does, which is ordinarily
+	// the client saying it is done. Only a connection that went away without
+	// saying so is worth reporting as a fault.
+	var pipeErr *ssh.PipeError
+	if errors.As(err, &pipeErr) {
+		info.EndedBy = pipeErr.EndedBy
+		if s.ctx.Err() != nil {
+			// Shutting down closes the connection under the session, so neither
+			// peer ended it however the read that noticed happened to fail.
+			info.EndedBy = "proxy"
+			return
+		}
+		if pipeErr.DisconnectReason != nil || errors.Is(err, io.EOF) {
+			return
+		}
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
 		slog.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
 			defaultAttributeNames.errorAttributes(err)...)
 	}

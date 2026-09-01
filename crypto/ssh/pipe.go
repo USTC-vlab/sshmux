@@ -460,16 +460,53 @@ func (s *PipeSession) SetDeadline(deadline time.Time) error {
 	return nil
 }
 
-func pipe(dst, src packetConn, handlePing bool) error {
+// PipeError reports how a piped session ended, and which of the two
+// connections it is piping between ended it. A session that ends because a peer
+// said it was done is not a fault of either.
+type PipeError struct {
+	// EndedBy names the connection the session ended on, which is "upstream"
+	// or "downstream".
+	EndedBy string
+	// DisconnectReason is the reason a peer gave where it ended the session by
+	// saying so, and is nil where the connection went away without one.
+	DisconnectReason *uint32
+	Err              error
+}
+
+func (e *PipeError) Error() string {
+	return fmt.Sprintf("ssh: session ended by %s: %v", e.EndedBy, e.Err)
+}
+
+func (e *PipeError) Unwrap() error { return e.Err }
+
+// pipeError names the connection an error came from, and reads the reason out
+// of a peer that ended the session by sending one.
+func pipeError(endedBy string, err error) error {
+	if err == nil {
+		return nil
+	}
+	failure := &PipeError{EndedBy: endedBy, Err: err}
+	var disconnect *disconnectMsg
+	if errors.As(err, &disconnect) {
+		reason := disconnect.Reason
+		failure.DisconnectReason = &reason
+	}
+	return failure
+}
+
+// pipe copies packets from src to dst until one of them fails, reporting
+// whether it was the connection being read from that failed rather than the one
+// being written to. Which of the two that is is what says who ended a session.
+func pipe(dst, src packetConn, handlePing bool) (sourceFailed bool, err error) {
 	for {
 		msg, err := src.readPacket()
 		if err != nil {
-			return err
+			return true, err
 		}
 		if msg[0] == msgGlobalRequest {
 			var request globalRequestMsg
 			if err := Unmarshal(msg, &request); err != nil {
-				return err
+				return true, err
 			}
 			if request.Type == "hostkeys-00@openssh.com" || request.Type == "hostkeys-prove-00@openssh.com" {
 				// The two sides of a PipeSession have different session IDs and
@@ -477,7 +514,7 @@ func pipe(dst, src packetConn, handlePing bool) error {
 				// verified by the other side, so do not advertise or relay it.
 				if request.WantReply {
 					if err := src.writePacket(Marshal(&globalRequestFailureMsg{})); err != nil {
-						return err
+						return true, err
 					}
 				}
 				continue
@@ -486,17 +523,15 @@ func pipe(dst, src packetConn, handlePing bool) error {
 		if handlePing && msg[0] == msgPing {
 			var ping pingMsg
 			if err := Unmarshal(msg, &ping); err != nil {
-				return fmt.Errorf("failed to unmarshal ping@openssh.com message: %w", err)
+				return true, fmt.Errorf("failed to unmarshal ping@openssh.com message: %w", err)
 			}
-			err = src.writePacket(Marshal(pongMsg(ping)))
-			if err != nil {
-				return err
+			if err := src.writePacket(Marshal(pongMsg(ping))); err != nil {
+				return true, err
 			}
 			continue
 		}
-		err = dst.writePacket(msg)
-		if err != nil {
-			return err
+		if err := dst.writePacket(msg); err != nil {
+			return false, err
 		}
 	}
 }
@@ -505,14 +540,26 @@ func (s *PipeSession) RunPipe() error {
 	c := make(chan error, 2)
 	go func() {
 		defer s.Downstream.transport.Close()
-		c <- pipe(s.Downstream.transport, s.Upstream.transport, false)
+		// Reading the upstream, so a failure to read is the upstream's end.
+		sourceFailed, err := pipe(s.Downstream.transport, s.Upstream.transport, false)
+		if sourceFailed {
+			c <- pipeError("upstream", err)
+		} else {
+			c <- pipeError("downstream", err)
+		}
 	}()
 	go func() {
 		defer s.Upstream.transport.Close()
 		// If the upstream doesn't support ping@openssh.com, short-circuit with a pong response
 		upstream_ping_version := s.Upstream.extensions["ping@openssh.com"]
 		upstream_supports_ping := len(upstream_ping_version) == 1 && upstream_ping_version[0] == byte('0')
-		c <- pipe(s.Upstream.transport, s.Downstream.transport, !upstream_supports_ping)
+		// Reading the downstream, so a failure to read is the downstream's end.
+		sourceFailed, err := pipe(s.Upstream.transport, s.Downstream.transport, !upstream_supports_ping)
+		if sourceFailed {
+			c <- pipeError("downstream", err)
+		} else {
+			c <- pipeError("upstream", err)
+		}
 	}()
 	return <-c
 }

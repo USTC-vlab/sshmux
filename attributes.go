@@ -75,6 +75,10 @@ type attributeNames struct {
 	eventStart    attribute.Key
 	eventEnd      attribute.Key
 	eventDuration attribute.Key
+	// Why an event happened, which for a session that ended is which of its two
+	// connections ended it: the ordinary answer is the client, the interesting
+	// one the backend.
+	eventReason attribute.Key
 
 	sshmuxAuthMethod attribute.Key
 	sshmuxAuthStatus attribute.Key
@@ -118,6 +122,7 @@ var defaultAttributeNames = attributeNames{
 	eventStart:              attribute.Key("event.start"),              // ECS; semconv has no equivalent
 	eventEnd:                attribute.Key("event.end"),                // ECS; semconv has no equivalent
 	eventDuration:           attribute.Key("event.duration"),           // ECS; semconv has no equivalent
+	eventReason:             attribute.Key("event.reason"),             // ECS; semconv has no equivalent
 	sshmuxAuthMethod:        attribute.Key("sshmux.auth.method"),
 	sshmuxAuthStatus:        attribute.Key("sshmux.auth.status"),
 	sshmuxHandshakeStart:    attribute.Key("sshmux.handshake.start"),
@@ -157,6 +162,7 @@ var ecsAttributeNames = attributeNames{
 	eventStart:              attribute.Key("event.start"),
 	eventEnd:                attribute.Key("event.end"),
 	eventDuration:           attribute.Key("event.duration"),
+	eventReason:             attribute.Key("event.reason"),
 	sshmuxAuthMethod:        attribute.Key("sshmux.auth.method"),
 	sshmuxAuthStatus:        attribute.Key("sshmux.auth.status"),
 	sshmuxHandshakeStart:    attribute.Key("sshmux.handshake.start"),
@@ -229,6 +235,9 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 		attrs = append(attrs,
 			n.serverAddress.String(info.UpstreamHost),
 			n.serverPort.Int(int(info.UpstreamPort)))
+	}
+	if info.EndedBy != "" {
+		attrs = append(attrs, n.eventReason.String(info.EndedBy))
 	}
 	return named(attrs)
 }

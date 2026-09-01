@@ -280,6 +280,8 @@ A `session.end` record names the connection with the attributes the spans carry,
 
 It names `sshmux.handshake.start` and `sshmux.handshake.end`, the moments the downstream handshake and the upstream dial began and concluded, which [`sshmux.handshake.duration`](#exported-metrics) measures between. They bracket the session within the connection that `event.start` and `event.end` bracket, the gap before the first being the SSH transport coming up, and the end of them being where a session that came up began being proxied.
 
+Where a session was piped, `event.reason` names what ended it: `downstream` where the client disconnected, which is how a session ordinarily ends, `upstream` where the backend went away under one, and `proxy` where `sshmux` closed the connection itself, as it does for every session still running when it shuts down. However one ended, it happened, so `event.outcome` stays `success`: how a session ended is not whether it did.
+
 It also names the two connections a session is actually made of, against the logical ends above: `sshmux.downstream.address` and `sshmux.downstream.port` for the address the client connected from, and `sshmux.upstream.address` and `sshmux.upstream.port` for the one the upstream connection ends at. Where a [PROXY protocol](#proxy-protocol-settings) hop sits on either side, these are the hop's, while `client.address` is the client the header claims and `server.address` is the backend the auth API named. A span says which end it means by its kind, but one record covers both connections, so `network.peer.address` would not say.
 
 The names above are the `default` convention's, which `ecs` renames as described under [Attribute Conventions](#attribute-conventions). The OTLP sink carries them as the log record's attributes, alongside the resource named by `logger.service-name` and `logger.attributes`, and carries the record's own time, level and message as the fields the data model has for them. The UDP sink writes one JSON document per datagram, in the shape [`logger.udp.shape`](#logger-udp-settings) asks for. Under the default shape and convention, abbreviated to a few of its attributes:
@@ -297,6 +299,8 @@ $ socat UDP-LISTEN:5556 STDOUT
 ```
 
 A connection that fails before the transport is up is counted by `sshmux.connections` without either record being written for it. A handshake that fails afterwards still ends its session, and is recorded with the fields known at that point.
+
+A session ending is not among the errors: a client saying it is done is how sessions end, and `event.reason` says so on the record instead.
 
 The errors `sshmux` carries on from go to the sinks as well: a connection it could not accept, a Prometheus endpoint that stopped serving, an exporter that would not shut down. Each is a record at `ERROR` naming one of the [error classes](#error-classes) as `error.type`, with what the error said and what it was beside it, and none of them says anything of a session. Every record is offered to standard error as well as to the sinks, whether one is configured or not: an operator watching the service should not have to run a collector to see it fail. What separates them is the level, the terminal taking `WARN` and above — so these errors reach it and a session that ran to its end does not.
 

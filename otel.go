@@ -52,6 +52,10 @@ type connectionInfo struct {
 	// SessionID identifies the SSH session, which is what the auth API is told
 	// as `session_id`. It is set once the SSH transport is up.
 	SessionID string
+	// EndedBy is the connection that ended a session that was being piped,
+	// which is the downstream where a client disconnects and the upstream where
+	// a backend goes away under one. It is empty where no session was piped.
+	EndedBy string
 	// HandshakeStart and HandshakeEnd are when the downstream handshake and the
 	// upstream dial began and concluded, which is the session's own span within
 	// the connection carrying it. Both are zero until the SSH transport is up.
