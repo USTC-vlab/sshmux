@@ -31,7 +31,11 @@ const unknownAttributeValue = "unknown"
 // attributeNames is the set of attribute keys one convention resolves to.
 // Only the names differ between conventions; the values never do.
 type attributeNames struct {
-	errorType              attribute.Key
+	errorType attribute.Key
+	// What an error said. The semantic conventions name it on the exception it
+	// came from, where ECS names it on the error and calls the two equivalent.
+	errorMessage attribute.Key
+
 	userName               attribute.Key
 	clientAddress          attribute.Key
 	clientPort             attribute.Key
@@ -86,6 +90,7 @@ type attributeNames struct {
 // own namespace, and follows the conventions wherever they move.
 var defaultAttributeNames = attributeNames{
 	errorType:               attribute.Key("error.type"),               // semconv
+	errorMessage:            attribute.Key("exception.message"),        // semconv
 	userName:                attribute.Key("user.name"),                // semconv
 	clientAddress:           attribute.Key("client.address"),           // semconv
 	clientPort:              attribute.Key("client.port"),              // semconv
@@ -122,6 +127,7 @@ var defaultAttributeNames = attributeNames{
 // ones that have since diverged, marked below, and for those that will.
 var ecsAttributeNames = attributeNames{
 	errorType:     attribute.Key("error.type"),
+	errorMessage:  attribute.Key("error.message"),
 	userName:      attribute.Key("user.name"),
 	clientAddress: attribute.Key("client.address"),
 	clientPort:    attribute.Key("client.port"),

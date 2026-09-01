@@ -245,6 +245,7 @@ They differ in the following attributes:
 | Application protocol | `network.protocol.name`    | `network.protocol` |
 | Its version          | `network.protocol.version` | dropped            |
 | Class of event       | `otel.event.name`          | `event.action`     |
+| What an error said   | `exception.message`        | `error.message`    |
 
 ## Logs
 
@@ -276,7 +277,9 @@ $ socat UDP-LISTEN:5556 STDOUT
 
 A connection that fails before the transport is up is counted by `sshmux.connections` without either record being written for it. A handshake that fails afterwards still ends its session, and is recorded with the fields known at that point.
 
-Only connections are recorded through these sinks. What the service itself reports — startup, shutdown, and the errors it recovers from — is written to standard error, so a collector receiving these logs sees the traffic through `sshmux` rather than the state of `sshmux` itself.
+The errors `sshmux` carries on from go to the sinks as well: a connection it could not accept, a Prometheus endpoint that stopped serving, an exporter that would not shut down. Each is a record at `ERROR` naming `error.type`, from the closed set the [metrics](#exported-metrics) classify an error by, and the error's own message, and none of them says anything of a session.
+
+What is left on standard error stays there: what `sshmux` says about its configuration, before there is a logger to say it through; an error shutting the logger down, it being the last thing torn down so that the others can report through it; and a session whose pipe failed, which is about one session rather than about the service.
 
 ## Metrics
 

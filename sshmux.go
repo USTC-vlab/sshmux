@@ -103,11 +103,13 @@ func makeServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	metrics, err := makeMetrics(config.Metrics)
+	// What the metrics and the tracer have to say about themselves goes where
+	// everything else sshmux says does.
+	metrics, err := makeMetricsWithLogger(config.Metrics, logger)
 	if err != nil {
 		return nil, err
 	}
-	tracer, err := makeTracer(config.Tracer)
+	tracer, err := makeTracerWithLogger(config.Tracer, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +157,8 @@ func (s *Server) serve() {
 					// Context cancelled, stop accepting connections
 					return
 				}
-				log.Printf("Error on Accept: %s\n", err)
+				s.Logger.LogAttrs(s.ctx, slog.LevelError,
+					"sshmux could not accept a connection", s.Logger.errorAttributes(err)...)
 				continue
 			}
 			s.wg.Add(1)
@@ -646,7 +649,8 @@ func (s *Server) Shutdown() {
 	// flush the final records and measurements once no handler can emit anymore
 	ctx, cancel := context.WithTimeout(context.Background(), otelShutdownTimeout)
 	defer cancel()
-	s.Logger.Shutdown(ctx)
+	// The logger goes last, being what the other two report through.
 	s.Metrics.Shutdown(ctx)
 	s.Tracer.Shutdown(ctx)
+	s.Logger.Shutdown(ctx)
 }

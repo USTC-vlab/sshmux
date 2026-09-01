@@ -43,10 +43,7 @@ type Logger struct {
 }
 
 func makeLogger(config LoggerConfig) (*Logger, error) {
-	logger := &Logger{
-		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
-		attrs:  defaultAttributeNames,
-	}
+	logger := &Logger{Logger: slog.New(slog.DiscardHandler), attrs: defaultAttributeNames}
 	if !config.Enabled {
 		return logger, nil
 	}
@@ -297,6 +294,16 @@ func (l *Logger) sessionStartAttributes(info connectionInfo, start time.Time) []
 	attrs = append(attrs, slogAttributes(names.connectionAttributes(info))...)
 	return append(attrs, slogAttributes(socketAttributes(info.ClientPeer,
 		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...)
+}
+
+// errorAttributes names an error the service carried on from, by the class the
+// metrics classify one by and the text ECS names. It says nothing of a session,
+// having none to say anything about.
+func (l *Logger) errorAttributes(err error) []slog.Attr {
+	return []slog.Attr{
+		slog.String(string(l.attrs.errorType), errorType(err)),
+		slog.String(string(l.attrs.errorMessage), err.Error()),
+	}
 }
 
 // eventNameProcessor moves the class of event a record is into the field the

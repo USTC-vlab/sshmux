@@ -394,6 +394,35 @@ func TestServerLogsNothingBeforeHandshake(t *testing.T) {
 	}
 }
 
+// TestLogRecordServiceError covers what the service says about itself: an error
+// it carried on from, named by the class the metrics classify one by and the
+// text ECS names, at a level that says it is not a session.
+func TestLogRecordServiceError(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	logger.LogAttrs(context.Background(), slog.LevelError,
+		"sshmux could not accept a connection", logger.errorAttributes(os.ErrDeadlineExceeded)...)
+
+	record := awaitRecord(t, records)
+	if record["message"] != "sshmux could not accept a connection" {
+		t.Errorf("message = %v", record["message"])
+	}
+	if record["log.level"] != "ERROR" {
+		t.Errorf("log.level = %v, want an error", record["log.level"])
+	}
+	if record["error.type"] != "timeout" {
+		t.Errorf("error.type = %v, want the class the metrics use", record["error.type"])
+	}
+	if record["exception.message"] != os.ErrDeadlineExceeded.Error() {
+		t.Errorf("exception.message = %v", record["exception.message"])
+	}
+	// It is not a session, so it says nothing of one.
+	for _, key := range []string{"otel.event.name", "session.id", "event.outcome"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want nothing of a session", key, value)
+		}
+	}
+}
+
 // TestServerLoggerWiring drives a connection past the SSH transport and checks
 // the session record reaches the sink.
 func TestServerLoggerWiring(t *testing.T) {

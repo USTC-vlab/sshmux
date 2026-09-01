@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -26,6 +26,8 @@ import (
 // tracer that spans are started from. Its span methods are no-ops while
 // tracing is disabled.
 type Tracer struct {
+	// logger is what a tracer reports through.
+	logger   *Logger
 	enabled  bool
 	provider *sdktrace.TracerProvider
 	tracer   trace.Tracer
@@ -35,13 +37,23 @@ type Tracer struct {
 	propagator propagation.TextMapPropagator
 }
 
+// makeTracer builds the tracer, discarding what it has to say about itself.
 func makeTracer(config TracerConfig) (*Tracer, error) {
+	return makeTracerWithLogger(config, nil)
+}
+
+// makeTracerWithLogger builds the tracer, which reports what it has to say
+// about itself through the logger given. A nil one discards those reports.
+func makeTracerWithLogger(config TracerConfig, logger *Logger) (*Tracer, error) {
 	names, err := conventionAttributeNames(config.Convention)
 	if err != nil {
 		return nil, err
 	}
+	if logger == nil {
+		logger = &Logger{Logger: slog.New(slog.DiscardHandler), attrs: names}
+	}
 	if !config.Enabled {
-		return &Tracer{tracer: noop.NewTracerProvider().Tracer(otelScopeName), attrs: names}, nil
+		return &Tracer{logger: logger, tracer: noop.NewTracerProvider().Tracer(otelScopeName), attrs: names}, nil
 	}
 	if !config.OTLP.Enabled {
 		return nil, errors.New("tracing is enabled but no exporter is configured")
@@ -69,7 +81,7 @@ func makeTracer(config TracerConfig) (*Tracer, error) {
 			sdktrace.ParentBased(sdktrace.TraceIDRatioBased(*config.SampleRatio))))
 	}
 	provider := sdktrace.NewTracerProvider(options...)
-	tracer := &Tracer{enabled: true, provider: provider, tracer: provider.Tracer(otelScopeName), attrs: names}
+	tracer := &Tracer{logger: logger, enabled: true, provider: provider, tracer: provider.Tracer(otelScopeName), attrs: names}
 	if boolOrDefault(config.Propagation, true) {
 		tracer.propagator = propagation.TraceContext{}
 	}
@@ -213,7 +225,8 @@ func (t *Tracer) Shutdown(ctx context.Context) {
 		return
 	}
 	if err := t.provider.Shutdown(ctx); err != nil {
-		log.Printf("Error on tracer shutdown: %s\n", err)
+		t.logger.LogAttrs(ctx, slog.LevelError,
+			"sshmux could not shut the tracer down", t.logger.errorAttributes(err)...)
 	}
 	t.provider = nil
 }

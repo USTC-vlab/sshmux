@@ -31,8 +31,8 @@ func TestConventionAttributeNames(t *testing.T) {
 	}
 
 	// The conventions adopted most of these fields from ECS, so they name all
-	// but the class of event, the application protocol and its version
-	// identically. A further difference needs a row in the README table, and
+	// but what an error said, the class of event, the application protocol and
+	// its version identically. A further difference needs a row in the README table, and
 	// this is what says so.
 	var differing []string
 	defaults, ecs := reflect.ValueOf(defaultAttributeNames), reflect.ValueOf(ecsAttributeNames)
@@ -43,7 +43,7 @@ func TestConventionAttributeNames(t *testing.T) {
 			differing = append(differing, defaults.Type().Field(i).Name)
 		}
 	}
-	want := []string{"networkProtocolName", "networkProtocolVersion", "eventName"}
+	want := []string{"errorMessage", "networkProtocolName", "networkProtocolVersion", "eventName"}
 	if !slices.Equal(differing, want) {
 		t.Errorf("the conventions differ in %v, want %v", differing, want)
 	}

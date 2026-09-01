@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -32,6 +32,8 @@ const (
 // instruments recorded by it, and the optional Prometheus scrape endpoint.
 // Its record methods are no-ops while metrics are disabled.
 type Metrics struct {
+	// logger is what the metrics report through.
+	logger  *Logger
 	enabled bool
 	// groupConnections reports whether the connection metrics carry the username
 	// and upstream dimensions.
@@ -56,12 +58,24 @@ type Metrics struct {
 	upstreamTotal     metric.Int64Counter
 }
 
+// makeMetrics builds the metrics, discarding what they have to say about
+// themselves.
 func makeMetrics(config MetricsConfig) (*Metrics, error) {
+	return makeMetricsWithLogger(config, nil)
+}
+
+// makeMetricsWithLogger builds the metrics, which report what they have to say
+// about themselves through the logger given. A nil one discards those reports.
+func makeMetricsWithLogger(config MetricsConfig, logger *Logger) (*Metrics, error) {
 	names, err := conventionAttributeNames(config.Convention)
 	if err != nil {
 		return nil, err
 	}
+	if logger == nil {
+		logger = &Logger{Logger: slog.New(slog.DiscardHandler), attrs: names}
+	}
 	metrics := &Metrics{
+		logger:           logger,
 		enabled:          config.Enabled,
 		groupConnections: boolOrDefault(config.ConnectionGrouping, true),
 		attrs:            names,
@@ -273,7 +287,8 @@ func (m *Metrics) Start() error {
 	m.promServer = &http.Server{Handler: m.promHandler}
 	go func() {
 		if err := m.promServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("Error on Prometheus endpoint: %s\n", err)
+			m.logger.LogAttrs(context.Background(), slog.LevelError,
+				"sshmux stopped serving the Prometheus endpoint", m.logger.errorAttributes(err)...)
 		}
 	}()
 	return nil
@@ -301,7 +316,8 @@ func (m *Metrics) Shutdown(ctx context.Context) {
 	}
 	if m.provider != nil {
 		if err := m.provider.Shutdown(ctx); err != nil {
-			log.Printf("Error on metrics shutdown: %s\n", err)
+			m.logger.LogAttrs(ctx, slog.LevelError,
+				"sshmux could not shut the metrics down", m.logger.errorAttributes(err)...)
 		}
 		m.provider = nil
 	}
