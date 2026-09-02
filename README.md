@@ -129,7 +129,7 @@ A shape names the document alone, so `shape = "ecs"` under the default `conventi
 
 Both of its addresses are the logical ends: `remote_ip` is the client the [PROXY protocol](#proxy-protocol-settings) header claims, and `host_ip` the backend the auth API named. Where a hop sits on either side, the address the connection really ends at is `sshmux.downstream.*` or `sshmux.upstream.*`, which this shape has no name for.
 
-This shape is frozen. It gains no field beyond the table above, whatever else a record comes to carry, so that the consumers written against it keep reading exactly what they always have. A field it has no name for is left out, and a record that is not a session is written without the shape at all.
+This shape is frozen. It gains no field beyond the table above, whatever else a record comes to carry, so that the consumers written against it keep reading exactly what they always have. A field it has no name for is left out, and a record other than `session.end`, the only event `sshmux` had when this was its only shape, is written without the shape at all.
 
 #### Logger OTLP Settings
 
@@ -248,11 +248,13 @@ They differ in the following attributes:
 
 ## Logs
 
-`sshmux` writes one record per session, through the sinks configured in the [Logger Settings](#logger-settings). Both sinks can be enabled at once, so an OTLP collector can be introduced alongside an existing UDP one.
+`sshmux` writes two records per session, through the sinks configured in the [Logger Settings](#logger-settings). Both sinks can be enabled at once, so an OTLP collector can be introduced alongside an existing UDP one.
 
-For now, every record is an event of one class, [`session.end`](https://opentelemetry.io/docs/specs/semconv/general/session/), which the semantic conventions define for a session that has concluded and which requires the `session.id` beside it, the SSH session identifier the auth API is told as `session_id`. Over OTLP and in an `otel` document it is the record's own event name; an `ecs` one has no field for it and carries it as `event.action`.
+Each record is one of the two [session events](https://opentelemetry.io/docs/specs/semconv/general/session/) the semantic conventions define, and carries the `session.id` they require, which is the SSH session identifier the auth API is told as `session_id`. Over OTLP and in an `otel` document the class is the record's own event name, rather than the attribute each convention [names it in](#attribute-conventions).
 
-A record names the connection with the attributes the spans carry, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, and leaves out the ones whose values a connection never reached. To those it adds the event: `event.start` and `event.end`, the UTC times the connection was accepted and ended, `event.duration` in nanoseconds, `event.outcome`, which is `success` where the session was established and `failure` otherwise, `error.type` where something went wrong, naming its class from the same closed set the [metrics](#exported-metrics) use, and the ECS categorization `event.kind`, `event.category` and `event.type`, fixed at `event`, `network`, and `connection` with `end`.
+`session.start` is written once the SSH transport is up, which is where a session is first identified. It carries what is known of the connection by then, which is neither a user, none having authenticated yet, nor a backend, none having been named. `session.end` is written when the connection closes, and is what the rest of this section describes.
+
+A `session.end` record names the connection with the attributes the spans carry, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, and leaves out the ones whose values a connection never reached. To those it adds the event: `event.start` and `event.end`, the UTC times the connection was accepted and ended, `event.duration` in nanoseconds, `event.outcome`, which is `success` where the session was established and `failure` otherwise, `error.type` where something went wrong, naming its class from the same closed set the [metrics](#exported-metrics) use, and the ECS categorization `event.kind`, `event.category` and `event.type`, fixed at `event`, `network`, and `connection` with `end`.
 
 It names `sshmux.handshake.start` and `sshmux.handshake.end`, the moments the downstream handshake and the upstream dial began and concluded, which [`sshmux.handshake.duration`](#exported-metrics) measures between. They bracket the session within the connection that `event.start` and `event.end` bracket, the gap before the first being the SSH transport coming up, and the end of them being where a session that came up began being proxied.
 
@@ -272,7 +274,7 @@ $ socat UDP-LISTEN:5556 STDOUT
 {"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"sshmux"}}]},"scopeLogs":[{"scope":{"name":"github.com/USTC-vlab/sshmux"},"logRecords":[{"eventName":"session.end","timeUnixNano":"1756352472664000000","severityNumber":9,"severityText":"INFO","body":{"stringValue":"SSH proxy session"},"attributes":[{"key":"event.outcome","value":{"stringValue":"success"}},{"key":"network.protocol.name","value":{"stringValue":"ssh"}},{"key":"session.id","value":{"stringValue":"3q2+7w=="}},{"key":"network.protocol.version","value":{"stringValue":"2.0"}},{"key":"user.name","value":{"stringValue":"vlab"}},{"key":"client.address","value":{"stringValue":"127.0.0.1"}},{"key":"client.port","value":{"intValue":"50227"}}],"traceId":"7a1e0dd3f9ee40a1b2c3d4e5f6a7b8c9","spanId":"3fbc2d1e4a5b6c7d"}]}]}]}
 ```
 
-A connection is recorded once its SSH transport is up, so one that fails before that is counted by `sshmux.connections` without a record being written for it. A handshake that fails afterwards is recorded with the fields known at that point.
+A connection that fails before the transport is up is counted by `sshmux.connections` without either record being written for it. A handshake that fails afterwards still ends its session, and is recorded with the fields known at that point.
 
 Only connections are recorded through these sinks. What the service itself reports — startup, shutdown, and the errors it recovers from — is written to standard error, so a collector receiving these logs sees the traffic through `sshmux` rather than the state of `sshmux` itself.
 

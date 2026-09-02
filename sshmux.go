@@ -282,9 +282,7 @@ func (s *Server) Handshake(ctx context.Context, session *ssh.PipeSession, info *
 	// Basic information about the downstream client, constant for the connection
 	clientAddress := session.Downstream.RemoteAddr().String()
 	clientVersion := string(session.Downstream.ClientVersion())
-	info.ProtocolVersion = sshProtocolVersion(clientVersion)
-	sessionID := base64.StdEncoding.EncodeToString(session.Downstream.SessionID())
-	info.SessionID = sessionID
+	sessionID := info.SessionID
 	// Stage 1: Authenticate the user with API
 	// The public key accepted by the API server, carried over to the later auth
 	// requests, so that it can still recognize the user by it.
@@ -544,7 +542,14 @@ func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *conn
 		return nil, err
 	}
 
+	// The transport is up, so the session it carries has an identity and a
+	// version, and has begun.
+	info.SessionID = base64.StdEncoding.EncodeToString(session.Downstream.SessionID())
+	info.ProtocolVersion = sshProtocolVersion(string(session.Downstream.ClientVersion()))
 	info.HandshakeStart = time.Now()
+	s.Logger.LogAttrs(ctx, slog.LevelInfo, "SSH proxy session started",
+		s.Logger.sessionStartAttributes(*info, info.HandshakeStart)...)
+
 	handshakeCtx, handshakeSpan := s.Tracer.Start(ctx, "ssh handshake")
 	err = s.Handshake(handshakeCtx, session, info)
 	info.HandshakeEnd = time.Now()
