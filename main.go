@@ -5,7 +5,9 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -40,6 +42,20 @@ func sshmuxServer(configFile string) (*Server, error) {
 	return makeServer(config)
 }
 
+type serverLifecycle interface {
+	Start() error
+	Shutdown()
+}
+
+func runUntilSignal(server serverLifecycle, signals <-chan os.Signal) error {
+	if err := server.Start(); err != nil {
+		return err
+	}
+	<-signals
+	server.Shutdown()
+	return nil
+}
+
 func main() {
 	var configFile string
 	flag.StringVar(&configFile, "c", "/etc/sshmux/config.toml", "config file")
@@ -48,9 +64,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = sshmux.Start()
-	if err != nil {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	if err := runUntilSignal(sshmux, signals); err != nil {
 		log.Fatal(err)
 	}
-	sshmux.Wait()
 }

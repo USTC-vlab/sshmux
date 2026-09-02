@@ -167,6 +167,11 @@ func (s *Server) serve() {
 func (s *Server) handler(conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
+	// Shutdown cancels the server context before waiting for handlers. Closing
+	// the connection makes an active RunPipe return, so the final log record can
+	// be emitted before the telemetry providers are flushed.
+	stopClosing := context.AfterFunc(s.ctx, func() { conn.Close() })
+	defer stopClosing()
 
 	connectTime := time.Now()
 	var info connectionInfo
