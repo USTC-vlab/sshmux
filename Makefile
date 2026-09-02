@@ -4,4 +4,4 @@ all:
 	go build -ldflags='-s -w' -trimpath
 
 test:
-	go test -race .
+	go test .
