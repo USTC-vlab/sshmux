@@ -319,6 +319,9 @@ auth_requests:
 			}
 			switch status {
 			case 200:
+				// Granted, or granted in part where challenges follow: either
+				// way, this method authenticated the user as far as it goes.
+				info.appendDownstreamAuthMethod(req.Method)
 				if resp.Upstream == nil {
 					// The API server partially accepts the publickey auth and requests
 					// challenges instead. Report the partial success and send the user
@@ -476,12 +479,16 @@ auth_requests:
 	}
 	upstreamInitialized = true
 	// Firstly try publickey or password
+	var method string
 	if upstream.Signer != nil {
+		method = "publickey"
 		err = session.Upstream.WriteAuthRequestPublicKey(upstream.Username, upstream.Signer)
 	} else if upstream.Password != nil {
+		method = "password"
 		err = session.Upstream.WriteAuthRequestPassword(upstream.Username, *upstream.Password)
 	} else {
 		// Send a none auth request
+		method = "none"
 		err = session.Upstream.WriteAuthNone(upstream.Username)
 	}
 	if err != nil {
@@ -490,6 +497,9 @@ auth_requests:
 	res, err := session.Upstream.ReadAuthResult()
 	if err != nil {
 		return err
+	}
+	if res.Success || res.PartialSuccess {
+		info.appendUpstreamAuthMethod(method)
 	}
 	// For the first auth fail, we mark it as partial success
 	if !res.Success {
@@ -518,6 +528,9 @@ auth_requests:
 		res, err := session.Upstream.ReadAuthResult()
 		if err != nil {
 			return err
+		}
+		if res.Success || res.PartialSuccess {
+			info.appendUpstreamAuthMethod(req.Method)
 		}
 		if !res.Success {
 			err = session.Downstream.WriteAuthFailure(removePublicKeyMethod(res.Methods), res.PartialSuccess)

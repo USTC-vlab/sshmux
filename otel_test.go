@@ -1,12 +1,34 @@
 package main
 
 import (
+	"slices"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
+
+// TestAppendAuthMethods covers what each side of a session is left having
+// authenticated by, which is what was accepted and nothing else, and which
+// counts several rounds of one method as the one method.
+func TestAppendAuthMethods(t *testing.T) {
+	var challenged connectionInfo
+	challenged.appendDownstreamAuthMethod("publickey")
+	challenged.appendDownstreamAuthMethod("keyboard-interactive")
+	challenged.appendDownstreamAuthMethod("keyboard-interactive")
+	if want := []string{"publickey", "keyboard-interactive"}; !slices.Equal(challenged.DownstreamAuthMethods, want) {
+		t.Errorf("downstream = %v, want %v", challenged.DownstreamAuthMethods, want)
+	}
+
+	// The credential the auth API answered with was refused, so the password
+	// the user signed in with after it is all this side authenticated by.
+	var fellBack connectionInfo
+	fellBack.appendUpstreamAuthMethod("password")
+	if want := []string{"password"}; !slices.Equal(fellBack.UpstreamAuthMethods, want) {
+		t.Errorf("upstream = %v, want %v", fellBack.UpstreamAuthMethods, want)
+	}
+}
 
 func TestOTLPProtocolPrecedence(t *testing.T) {
 	cases := []struct {

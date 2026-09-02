@@ -251,6 +251,10 @@ func (l *Logger) sessionAttributes(info connectionInfo, err error, connect, disc
 	)
 	// The connection is named by the same builder the spans are built from.
 	attrs = append(attrs, slogAttributes(names.connectionAttributes(info))...)
+	// The spans name one auth request each. A record covers the session they
+	// were made for, so it names the methods it went through rather than any
+	// one of them, and the status of each stays on the request that answered it.
+	attrs = append(attrs, slogAttributes(names.authMethodAttributes(info))...)
 	// A span names its peer without ambiguity because its kind says which end
 	// that is. One record covers both of a session's connections, so it names
 	// each of them rather than either as the peer.
