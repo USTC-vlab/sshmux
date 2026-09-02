@@ -521,7 +521,9 @@ auth_requests:
 		if err != nil {
 			return err
 		}
-		req.SetUser(upstream.Username)
+		// Every request reaching the backend carries the username it knows the
+		// user by, which the auth API may have chosen rather than the client.
+		req.User = upstream.Username
 		err = session.Upstream.WriteAuthRequest(req)
 		if err != nil {
 			return err
