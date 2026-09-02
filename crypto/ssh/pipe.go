@@ -461,6 +461,23 @@ func pipe(dst, src packetConn, handlePing bool) error {
 		if err != nil {
 			return err
 		}
+		if msg[0] == msgGlobalRequest {
+			var request globalRequestMsg
+			if err := Unmarshal(msg, &request); err != nil {
+				return err
+			}
+			if request.Type == "hostkeys-00@openssh.com" || request.Type == "hostkeys-prove-00@openssh.com" {
+				// The two sides of a PipeSession have different session IDs and
+				// host keys. A host key proof made by one side therefore cannot be
+				// verified by the other side, so do not advertise or relay it.
+				if request.WantReply {
+					if err := src.writePacket(Marshal(&globalRequestFailureMsg{})); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+		}
 		if handlePing && msg[0] == msgPing {
 			var ping pingMsg
 			if err := Unmarshal(msg, &ping); err != nil {
