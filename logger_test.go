@@ -965,6 +965,36 @@ func TestLogRecordEndedBy(t *testing.T) {
 	}
 }
 
+// TestLogRecordSessionFault covers a session that ended without either of its
+// connections saying so, which is reported beside the session's own record and
+// names the session it belongs to.
+func TestLogRecordSessionFault(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	logger.LogAttrs(context.Background(), slog.LevelWarn, "sshmux lost a session",
+		append(logger.errorAttributes(io.ErrUnexpectedEOF),
+			logger.connectionAttributes(testSession)...)...)
+
+	record := awaitRecord(t, records)
+	// A session that ended badly still happened, so this is not an error of
+	// sshmux's to answer for.
+	if record["log.level"] != "WARN" {
+		t.Errorf("log.level = %v, want a warning rather than an error", record["log.level"])
+	}
+	if record["error.type"] != "eof" {
+		t.Errorf("error.type = %v, want the class the metrics use", record["error.type"])
+	}
+	if record["session.id"] != testSession.SessionID {
+		t.Errorf("session.id = %v, want the session it belongs to", record["session.id"])
+	}
+	// The session's own record says how it ended; this one says only that it
+	// did not end well.
+	for _, key := range []string{"otel.event.name", "event.outcome", "event.reason"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want it left to the session's record", key, value)
+		}
+	}
+}
+
 // TestLegacyShapeIgnoresTheSockets checks that the addresses sshmux is really
 // connected to and from reach the schema's sinks without reaching this one,
 // whose fields are fixed.
