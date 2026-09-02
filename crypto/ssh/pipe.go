@@ -33,6 +33,11 @@ type AuthRequest struct {
 	Password         []byte
 }
 
+// SetUser changes the username carried by an authentication request.
+func (r *AuthRequest) SetUser(user string) {
+	r.User = user
+}
+
 type AuthResult struct {
 	Packet         []byte
 	Success        bool

@@ -89,6 +89,7 @@ func listenLocalhost(t *testing.T) net.Listener {
 
 var enableProxy bool
 var enablePartialAuth bool
+var upstreamUsername string
 var inited bool
 
 // partialAuthToken is the answer expected by the auth API when partial auth is
@@ -229,6 +230,9 @@ func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 				"port":        sshdServerAddr.Port,
 				"private_key": string(sshPrivateKey),
 			},
+		}
+		if upstreamUsername != "" {
+			res["upstream"].(map[string]any)["username"] = upstreamUsername
 		}
 		if enableProxy {
 			res["proxy"] = map[string]any{
@@ -465,18 +469,45 @@ func stopSSHD(t *testing.T, cmd *exec.Cmd) {
 
 // runSSHClient runs a command over the system ssh client against address.
 func runSSHClient(t *testing.T, address *net.TCPAddr) {
+	runSSHClientAs(t, address, "")
+}
+
+func runSSHClientAs(t *testing.T, address *net.TCPAddr, username string) {
 	t.Helper()
-	sshCommand := exec.Command(
+	args := []string{
 		"ssh", "-p", fmt.Sprint(address.Port),
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ControlMaster=no",
 		"-i", "fixtures/ssh_id_rsa",
 		"-o", "IdentityAgent=no",
-		address.IP.String(), "uname")
+	}
+	if username != "" {
+		args = append(args, "-l", username)
+	}
+	args = append(args, address.IP.String(), "uname")
+	sshCommand := exec.Command(args[0], args[1:]...)
 	sshCommand.Dir, _ = os.Getwd()
 	if err := sshCommand.Run(); err != nil {
 		t.Fatal("ssh: ", err)
 	}
+}
+
+func TestSSHUpstreamUsername(t *testing.T) {
+	initEnv(t)
+
+	currentUser, err := user.Current()
+	if err != nil {
+		t.Fatalf("failed to get current user: %v", err)
+	}
+	upstreamUsername = currentUser.Username
+	defer func() { upstreamUsername = "" }()
+
+	sshmux := startServer(t, "config.toml")
+	defer sshmux.Shutdown()
+	cmd := onetimeSSHDServer(t)
+	defer stopSSHD(t, cmd)
+
+	runSSHClientAs(t, sshmuxServerAddr, "different-downstream-user")
 }
 
 // sanityCheckSSHD talks to a throwaway sshd directly, so that a broken

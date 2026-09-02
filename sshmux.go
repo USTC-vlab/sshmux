@@ -48,6 +48,7 @@ const (
 
 type upstreamInformation struct {
 	Address          string
+	Username         string
 	Signer           ssh.Signer
 	Password         *string
 	ProxyProtocol    *byte
@@ -348,11 +349,15 @@ auth_requests:
 				if upstreamResp.Port == 0 {
 					upstreamResp.Port = 22
 				}
+				if upstreamResp.Username == "" {
+					upstreamResp.Username = user
+				}
 				signer, err := parsePrivateKey(upstreamResp.PrivateKey, upstreamResp.Certificate)
 				if err != nil {
 					return fmt.Errorf("failed to parse private key for user %s: %v", user, err)
 				}
 				upstream = &upstreamInformation{
+					Username: upstreamResp.Username,
 					Signer:   signer,
 					Password: upstreamResp.Password,
 				}
@@ -456,7 +461,7 @@ auth_requests:
 		}
 	}
 	sshConfig := &ssh.ClientConfig{
-		User:            user,
+		User:            upstream.Username,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 	err = session.InitUpstream(conn, upstream.Address, sshConfig)
@@ -466,12 +471,12 @@ auth_requests:
 	upstreamInitialized = true
 	// Firstly try publickey or password
 	if upstream.Signer != nil {
-		err = session.Upstream.WriteAuthRequestPublicKey(user, upstream.Signer)
+		err = session.Upstream.WriteAuthRequestPublicKey(upstream.Username, upstream.Signer)
 	} else if upstream.Password != nil {
-		err = session.Upstream.WriteAuthRequestPassword(user, *upstream.Password)
+		err = session.Upstream.WriteAuthRequestPassword(upstream.Username, *upstream.Password)
 	} else {
 		// Send a none auth request
-		err = session.Upstream.WriteAuthNone(user)
+		err = session.Upstream.WriteAuthNone(upstream.Username)
 	}
 	if err != nil {
 		return err
@@ -499,6 +504,7 @@ auth_requests:
 		if err != nil {
 			return err
 		}
+		req.SetUser(upstream.Username)
 		err = session.Upstream.WriteAuthRequest(req)
 		if err != nil {
 			return err

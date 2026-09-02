@@ -386,6 +386,7 @@ and disconnects the user.
 | ------------- | -------- | --------------------------------------------------------------------------- | -------- |
 | `host`        | `string` | Host name or IP of upstream SSH server.                                     | Yes      |
 | `port`        | `uint`   | Port number of upstream SSH server. Defaults to `22`.                       | No       |
+| `username`    | `string` | User name for upstream SSH authentication. Defaults to the downstream user name. | No   |
 | `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `password`    | `string` | Password for authenticating with upstream.                                  | No       |
