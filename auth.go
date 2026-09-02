@@ -49,6 +49,7 @@ type AuthFailure struct {
 type AuthUpstream struct {
 	Host        string  `json:"host"`
 	Port        uint16  `json:"port,omitempty"`
+	Username    string  `json:"username,omitempty"`
 	PrivateKey  string  `json:"private_key,omitempty"`
 	Certificate string  `json:"certificate,omitempty"`
 	Password    *string `json:"password,omitempty"`
