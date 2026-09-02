@@ -14,10 +14,11 @@ import (
 
 // testConnection is the connection identity used by the metric assertions.
 var testConnection = connectionInfo{
-	Username:     "vlab",
-	UpstreamHost: "10.0.0.7",
-	UpstreamPort: 22,
-	Established:  true,
+	Username:         "vlab",
+	UpstreamUsername: "ubuntu",
+	UpstreamHost:     "10.0.0.7",
+	UpstreamPort:     22,
+	Established:      true,
 }
 
 // prometheusMetrics starts a Metrics instance with only the Prometheus
@@ -102,12 +103,12 @@ func TestMetricsPrometheusEndpoint(t *testing.T) {
 	metrics.ConnectionClosed(ctx, testConnection, os.ErrDeadlineExceeded, 2*time.Second)
 
 	body := scrape(t, metrics)
-	const group = `event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",user_name="vlab"`
+	const group = `event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",sshmux_upstream_username="ubuntu",user_name="vlab"`
 	for _, want := range []string{
 		`sshmux_connections_total 2`,
 		`sshmux_connections_active 0`,
 		`sshmux_sessions_total{` + group + `} 1`,
-		`sshmux_sessions_total{error_type="timeout",event_outcome="failure",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",user_name="vlab"} 1`,
+		`sshmux_sessions_total{error_type="timeout",event_outcome="failure",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",sshmux_upstream_username="ubuntu",user_name="vlab"} 1`,
 		`sshmux_upstream_connections_total{event_outcome="success"} 1`,
 		`sshmux_session_duration_seconds_count{` + group + `} 1`,
 		`sshmux_handshake_duration_seconds_count{` + group + `} 1`,
@@ -242,9 +243,9 @@ func TestConnectionGrouping(t *testing.T) {
 
 	body := scrape(t, metrics)
 	for _, want := range []string{
-		`sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",user_name="vlab"} 1`,
-		`sshmux_session_duration_seconds_count{event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",user_name="vlab"} 1`,
-		`sshmux_sessions_total{error_type="eof",event_outcome="failure",server_address="unknown",server_port="0",sshmux_upstream_role="",user_name="unknown"} 1`,
+		`sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",sshmux_upstream_username="ubuntu",user_name="vlab"} 1`,
+		`sshmux_session_duration_seconds_count{event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",sshmux_upstream_username="ubuntu",user_name="vlab"} 1`,
+		`sshmux_sessions_total{error_type="eof",event_outcome="failure",server_address="unknown",server_port="0",sshmux_upstream_role="",sshmux_upstream_username="unknown",user_name="unknown"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scrape output does not contain %q:\n%s", want, body)
@@ -403,10 +404,11 @@ func recordSessions(t *testing.T, metrics *Metrics, count int) {
 	t.Helper()
 	for i := range count {
 		info := connectionInfo{
-			Username:     fmt.Sprintf("user%d", i),
-			UpstreamHost: fmt.Sprintf("10.0.0.%d", i),
-			UpstreamPort: 22,
-			Established:  true,
+			Username:         fmt.Sprintf("user%d", i),
+			UpstreamUsername: fmt.Sprintf("user%d", i),
+			UpstreamHost:     fmt.Sprintf("10.0.0.%d", i),
+			UpstreamPort:     22,
+			Established:      true,
 		}
 		metrics.ConnectionClosed(t.Context(), info, nil, time.Second)
 	}
@@ -577,7 +579,7 @@ func TestMetricsConvention(t *testing.T) {
 			defer metrics.Shutdown(t.Context())
 
 			metrics.ConnectionClosed(t.Context(), testConnection, nil, time.Second)
-			want := `sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",user_name="vlab"} 1`
+			want := `sshmux_sessions_total{event_outcome="success",server_address="10.0.0.7",server_port="22",sshmux_upstream_role="",sshmux_upstream_username="ubuntu",user_name="vlab"} 1`
 			if body := scrape(t, metrics); !strings.Contains(body, want) {
 				t.Errorf("scrape does not contain %q:\n%s", want, body)
 			}

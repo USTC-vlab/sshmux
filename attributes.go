@@ -99,9 +99,12 @@ type attributeNames struct {
 	sshmuxDownstreamPort    attribute.Key
 	sshmuxUpstreamAddress   attribute.Key
 	sshmuxUpstreamPort      attribute.Key
-	// What the auth API said the upstream is to the user, which no address
-	// reveals and sshmux does not interpret.
-	sshmuxUpstreamRole attribute.Key
+	// The username sshmux authenticates to the backend as, which the auth API
+	// may choose rather than the client, where user.name is the user who
+	// connected. The label the auth API put on that upstream follows it, which
+	// sshmux carries and does not interpret.
+	sshmuxUpstreamUsername attribute.Key
+	sshmuxUpstreamRole     attribute.Key
 }
 
 // defaultAttributeNames resolves each attribute against the OpenTelemetry
@@ -139,6 +142,7 @@ var defaultAttributeNames = attributeNames{
 	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
 	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
 	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
+	sshmuxUpstreamUsername:      attribute.Key("sshmux.upstream.username"),
 	sshmuxUpstreamRole:          attribute.Key("sshmux.upstream.role"),
 }
 
@@ -181,6 +185,7 @@ var ecsAttributeNames = attributeNames{
 	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
 	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
 	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
+	sshmuxUpstreamUsername:      attribute.Key("sshmux.upstream.username"),
 	sshmuxUpstreamRole:          attribute.Key("sshmux.upstream.role"),
 }
 
@@ -241,6 +246,12 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 			n.serverAddress.String(info.UpstreamHost),
 			n.serverPort.Int(int(info.UpstreamPort)))
 	}
+	// Who sshmux signs in to the backend as, which is the client's own username
+	// unless the auth API chose another. It is named whichever it is, so that
+	// the account a session reached is read without inferring it from user.name.
+	if info.UpstreamUsername != "" {
+		attrs = append(attrs, n.sshmuxUpstreamUsername.String(info.UpstreamUsername))
+	}
 	// Only where the API labelled one: an empty role on every session is noise
 	// a datagram pays for.
 	if info.UpstreamRole != "" {
@@ -276,6 +287,7 @@ func (n attributeNames) connectionMetricAttributes(info connectionInfo, grouped 
 	if grouped {
 		attrs = append(attrs,
 			n.userName.String(valueOrDefault(info.Username, unknownAttributeValue)),
+			n.sshmuxUpstreamUsername.String(valueOrDefault(info.UpstreamUsername, unknownAttributeValue)),
 			n.serverAddress.String(valueOrDefault(info.UpstreamHost, unknownAttributeValue)),
 			n.serverPort.Int(int(info.UpstreamPort)),
 		)
