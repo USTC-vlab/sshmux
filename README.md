@@ -355,7 +355,7 @@ Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving 
 | Span                    | Kind       | Parent                  | Attributes                                                   | Covers                                                    |
 | ----------------------- | ---------- | ----------------------- | ------------------------------------------------------------ | --------------------------------------------------------- |
 | `establish ssh session` | `server`   | —                       | Connection, peer                                             | Accepting the connection through to a session that is up. |
-| `ssh handshake`         | `internal` | `establish ssh session` | Connection                                                   | The downstream handshake and authentication.              |
+| `ssh handshake`         | `internal` | `establish ssh session` | Connection, `sshmux.*.auth.methods`                          | The downstream handshake and authentication.              |
 | `authenticate user`     | `client`   | `ssh handshake`         | `server.*`, peer, `sshmux.auth.method`, `sshmux.auth.status` | One request to the auth API.                              |
 | `connect upstream`      | `client`   | `ssh handshake`         | `server.*`, peer                                             | Dialling the backend.                                     |
 

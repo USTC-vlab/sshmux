@@ -174,6 +174,12 @@ func (t *Tracer) connectionSpanAttributes(info connectionInfo) []attribute.KeyVa
 	return t.attrs.connectionAttributes(info)
 }
 
+// authMethodSpanAttributes names what authenticated each side of the session a
+// span covers, under the convention the tracer was configured with.
+func (t *Tracer) authMethodSpanAttributes(info connectionInfo) []attribute.KeyValue {
+	return t.attrs.authMethodAttributes(info)
+}
+
 // serverAttributes names the service a client span called.
 func (t *Tracer) serverAttributes(server *url.URL) []attribute.KeyValue {
 	return t.attrs.serverAttributes(server)

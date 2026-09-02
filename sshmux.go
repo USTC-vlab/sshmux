@@ -569,7 +569,10 @@ func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *conn
 	handshakeCtx, handshakeSpan := s.Tracer.Start(ctx, "ssh handshake")
 	err = s.Handshake(handshakeCtx, session, info)
 	info.HandshakeEnd = time.Now()
-	endSpan(handshakeSpan, err, s.Tracer.connectionSpanAttributes(*info)...)
+	// The handshake is where a session authenticates, so the span covering it
+	// says what each side authenticated by.
+	endSpan(handshakeSpan, err, append(s.Tracer.connectionSpanAttributes(*info),
+		s.Tracer.authMethodSpanAttributes(*info)...)...)
 	s.Metrics.HandshakeFinished(ctx, *info, err, info.HandshakeEnd.Sub(info.HandshakeStart))
 	if err != nil {
 		return session, err
