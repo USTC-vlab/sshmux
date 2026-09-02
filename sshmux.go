@@ -231,7 +231,8 @@ func (s *Server) handler(conn net.Conn) {
 	}
 	// A session ends when one of its two connections does, which is ordinarily
 	// the client saying it is done. Only a connection that went away without
-	// saying so is worth reporting as a fault.
+	// saying so is a fault, and only a session that was piped can have one: a
+	// handshake that failed is the session record's own business.
 	var pipeErr *ssh.PipeError
 	if errors.As(err, &pipeErr) {
 		info.EndedBy = pipeErr.EndedBy
@@ -241,13 +242,10 @@ func (s *Server) handler(conn net.Conn) {
 			info.EndedBy = "proxy"
 			return
 		}
-		if pipeErr.DisconnectReason != nil || errors.Is(err, io.EOF) {
-			return
+		if pipeErr.DisconnectReason == nil && !errors.Is(err, io.EOF) {
+			s.Logger.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
+				s.Logger.sessionFaultAttributes(info, err)...)
 		}
-	}
-	if err != nil && !errors.Is(err, io.EOF) {
-		slog.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
-			defaultAttributeNames.errorAttributes(err)...)
 	}
 }
 

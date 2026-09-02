@@ -311,6 +311,14 @@ func (l *Logger) sessionStartAttributes(info connectionInfo, start time.Time) []
 		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...)
 }
 
+// sessionFaultAttributes names a session that ended without either of its
+// connections saying so: the error that ended it, beside the connection the
+// session's own record is identified by, so that the two are read together.
+func (l *Logger) sessionFaultAttributes(info connectionInfo, err error) []slog.Attr {
+	return append(l.attrs.errorAttributes(err),
+		slogAttributes(l.attrs.connectionAttributes(info))...)
+}
+
 // eventNameProcessor moves the class of event a record is into the field the
 // data model keeps it in, out of the attribute a logging library has to carry
 // it in for want of a way to reach that field. Records reach the exporter
