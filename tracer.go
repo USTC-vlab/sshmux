@@ -226,7 +226,7 @@ func (t *Tracer) Shutdown(ctx context.Context) {
 	}
 	if err := t.provider.Shutdown(ctx); err != nil {
 		t.logger.LogAttrs(ctx, slog.LevelError,
-			"sshmux could not shut the tracer down", t.logger.errorAttributes(err)...)
+			"sshmux could not shut the tracer down", t.logger.attrs.errorAttributes(err)...)
 	}
 	t.provider = nil
 }

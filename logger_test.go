@@ -400,7 +400,7 @@ func TestServerLogsNothingBeforeHandshake(t *testing.T) {
 func TestLogRecordServiceError(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
 	logger.LogAttrs(context.Background(), slog.LevelError,
-		"sshmux could not accept a connection", logger.errorAttributes(os.ErrDeadlineExceeded)...)
+		"sshmux could not accept a connection", logger.attrs.errorAttributes(os.ErrDeadlineExceeded)...)
 
 	record := awaitRecord(t, records)
 	if record["message"] != "sshmux could not accept a connection" {
@@ -761,6 +761,33 @@ func TestLegacyShapeWritesOnlyTheSessionEnd(t *testing.T) {
 		if value, ok := record[key]; ok {
 			t.Errorf("%s = %v, want no session document for an event that is not one", key, value)
 		}
+	}
+}
+
+// TestServiceErrorsReachTheConsole covers the console keeping what the service
+// has to say about itself, whether a sink is configured or not, where a session
+// that ran to its end is left to the sinks by the level.
+func TestServiceErrorsReachTheConsole(t *testing.T) {
+	var console strings.Builder
+	logger, err := makeLoggerWithBase(LoggerConfig{},
+		slog.New(slog.NewTextHandler(&console, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.LogAttrs(context.Background(), slog.LevelError,
+		"sshmux could not accept a connection", logger.attrs.errorAttributes(os.ErrDeadlineExceeded)...)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "SSH proxy session",
+		logger.sessionAttributes(testSession, nil, time.Unix(1700000000, 0), time.Unix(1700000001, 0))...)
+
+	written := console.String()
+	if !strings.Contains(written, "sshmux could not accept a connection") {
+		t.Errorf("console = %q, want the error it carried on from", written)
+	}
+	if !strings.Contains(written, "error.type=timeout") {
+		t.Errorf("console = %q, want the class the metrics use", written)
+	}
+	if strings.Contains(written, "SSH proxy session") {
+		t.Errorf("console = %q, want a session left to the sinks", written)
 	}
 }
 

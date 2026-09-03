@@ -277,9 +277,9 @@ $ socat UDP-LISTEN:5556 STDOUT
 
 A connection that fails before the transport is up is counted by `sshmux.connections` without either record being written for it. A handshake that fails afterwards still ends its session, and is recorded with the fields known at that point.
 
-The errors `sshmux` carries on from go to the sinks as well: a connection it could not accept, a Prometheus endpoint that stopped serving, an exporter that would not shut down. Each is a record at `ERROR` naming `error.type`, from the closed set the [metrics](#exported-metrics) classify an error by, and the error's own message, and none of them says anything of a session.
+The errors `sshmux` carries on from go to the sinks as well: a connection it could not accept, a Prometheus endpoint that stopped serving, an exporter that would not shut down. Each is a record at `ERROR` naming `error.type`, from the closed set the [metrics](#exported-metrics) classify an error by, and the error's own message, and none of them says anything of a session. Every record is offered to standard error as well as to the sinks, whether one is configured or not: an operator watching the service should not have to run a collector to see it fail. What separates them is the level, the terminal taking `WARN` and above — so these errors reach it and a session that ran to its end does not.
 
-What is left on standard error stays there: what `sshmux` says about its configuration, before there is a logger to say it through; an error shutting the logger down, it being the last thing torn down so that the others can report through it; and a session whose pipe failed, which is about one session rather than about the service.
+Three things reach the terminal alone, no sink being up to carry them: what `sshmux` says about its configuration, before there is a logger to say it through; an error shutting the logger down, it being the last thing torn down so that the others can report through it; and a session whose pipe failed, which is about one session rather than about the service. All three are written the same way as the rest, so a terminal reads one shape throughout.
 
 ## Metrics
 

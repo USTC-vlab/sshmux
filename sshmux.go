@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -99,7 +98,7 @@ func makeServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	logger, err := makeLogger(config.Logger)
+	logger, err := makeLoggerWithBase(config.Logger, slog.Default())
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +157,7 @@ func (s *Server) serve() {
 					return
 				}
 				s.Logger.LogAttrs(s.ctx, slog.LevelError,
-					"sshmux could not accept a connection", s.Logger.errorAttributes(err)...)
+					"sshmux could not accept a connection", s.Logger.attrs.errorAttributes(err)...)
 				continue
 			}
 			s.wg.Add(1)
@@ -231,7 +230,8 @@ func (s *Server) handler(conn net.Conn) {
 		}
 	}
 	if err != nil && err != io.EOF {
-		log.Println("runPipeSession:", err)
+		slog.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
+			defaultAttributeNames.errorAttributes(err)...)
 	}
 }
 

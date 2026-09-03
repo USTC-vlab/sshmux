@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -173,6 +174,16 @@ func conventionAttributeNames(convention AttributeConvention) (attributeNames, e
 
 func (n attributeNames) success() attribute.KeyValue { return n.eventOutcome.String("success") }
 func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.String("failure") }
+
+// errorAttributes names an error the service carried on from, by the class the
+// metrics classify one by and the text ECS names. It says nothing of a session,
+// having none to say anything about.
+func (n attributeNames) errorAttributes(err error) []slog.Attr {
+	return []slog.Attr{
+		slog.String(string(n.errorType), errorType(err)),
+		slog.String(string(n.errorMessage), err.Error()),
+	}
+}
 
 // connectionAttributes reports the parts of a connection's identity that are
 // known. Both the spans and the log records are built from it, so that one
