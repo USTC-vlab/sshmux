@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"syscall"
@@ -35,9 +36,13 @@ const unknownAttributeValue = "unknown"
 // Only the names differ between conventions; the values never do.
 type attributeNames struct {
 	errorType attribute.Key
-	// What an error said. The semantic conventions name it on the exception it
-	// came from, where ECS names it on the error and calls the two equivalent.
-	errorMessage attribute.Key
+	// What kind of error it was, and what it said. The semantic conventions
+	// name both on the exception they came from, where ECS names the message
+	// on the error and calls the two equivalent. ECS has no second name for the
+	// kind, its own error.type being the class above, so it drops this one
+	// rather than writing two things under one name.
+	exceptionType    attribute.Key
+	exceptionMessage attribute.Key
 
 	userName               attribute.Key
 	clientAddress          attribute.Key
@@ -93,7 +98,8 @@ type attributeNames struct {
 // own namespace, and follows the conventions wherever they move.
 var defaultAttributeNames = attributeNames{
 	errorType:               attribute.Key("error.type"),               // semconv
-	errorMessage:            attribute.Key("exception.message"),        // semconv
+	exceptionType:           attribute.Key("exception.type"),           // semconv
+	exceptionMessage:        attribute.Key("exception.message"),        // semconv
 	userName:                attribute.Key("user.name"),                // semconv
 	clientAddress:           attribute.Key("client.address"),           // semconv
 	clientPort:              attribute.Key("client.port"),              // semconv
@@ -129,16 +135,16 @@ var defaultAttributeNames = attributeNames{
 // having adopted the fields from ECS. The two tables are kept apart for the
 // ones that have since diverged, marked below, and for those that will.
 var ecsAttributeNames = attributeNames{
-	errorType:     attribute.Key("error.type"),
-	errorMessage:  attribute.Key("error.message"),
-	userName:      attribute.Key("user.name"),
-	clientAddress: attribute.Key("client.address"),
-	clientPort:    attribute.Key("client.port"),
-	serverAddress: attribute.Key("server.address"),
-	serverPort:    attribute.Key("server.port"),
-	// The two attributes the conventions do not share: ECS names the
-	// application protocol without the namespace the semantic conventions put
-	// it in, and has nothing for its version. An empty key drops the attribute.
+	errorType:        attribute.Key("error.type"),
+	exceptionMessage: attribute.Key("error.message"),
+	userName:         attribute.Key("user.name"),
+	clientAddress:    attribute.Key("client.address"),
+	clientPort:       attribute.Key("client.port"),
+	serverAddress:    attribute.Key("server.address"),
+	serverPort:       attribute.Key("server.port"),
+	// ECS names the application protocol without the namespace the semantic
+	// conventions put it in, and has nothing for its version. An empty key
+	// drops the attribute.
 	networkProtocolName:     attribute.Key("network.protocol"),
 	networkPeerAddress:      attribute.Key("network.peer.address"),
 	networkPeerPort:         attribute.Key("network.peer.port"),
@@ -177,14 +183,21 @@ func conventionAttributeNames(convention AttributeConvention) (attributeNames, e
 func (n attributeNames) success() attribute.KeyValue { return n.eventOutcome.String("success") }
 func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.String("failure") }
 
-// errorAttributes names an error the service carried on from, by its class and
-// the text ECS names. It says nothing of a session, having none to say anything
-// about.
+// errorAttributes names an error the service carried on from: the class to act
+// on, what it said, and what it was. It says nothing of a session, having none
+// to say anything about.
 func (n attributeNames) errorAttributes(err error) []slog.Attr {
-	return []slog.Attr{
+	attrs := []slog.Attr{
 		slog.String(string(n.errorType), errorType(err)),
-		slog.String(string(n.errorMessage), err.Error()),
+		slog.String(string(n.exceptionMessage), err.Error()),
 	}
+	// The type behind the class, where the convention has a name for it. A
+	// record has no cardinality to protect, so it can carry the type itself
+	// rather than another of the closed classes above.
+	if n.exceptionType != "" {
+		attrs = append(attrs, slog.String(string(n.exceptionType), exceptionType(err)))
+	}
+	return attrs
 }
 
 // connectionAttributes reports the parts of a connection's identity that are
@@ -253,10 +266,40 @@ func (n attributeNames) outcome(succeeded bool, err error) []attribute.KeyValue 
 	return named(attrs)
 }
 
+// fmtWrapErrorType is the type fmt.Errorf returns when it wraps with %w, which
+// says nothing about what went wrong.
+var fmtWrapErrorType = reflect.TypeOf(fmt.Errorf("wrapped: %w", errors.New("err")))
+
+// exceptionType names the type an error is, reading past what only wraps it:
+// the wrappers fmt.Errorf builds, which the semantic conventions allow where a
+// wrapper does not help classify the failure, and the pointer an error is
+// almost always held through, which names the type rather than describes it.
+// Only the type is read this way -- the message stays the one the error gave,
+// which is what the wrapping was for. A wrapper around nothing is all there is
+// to name, so it names itself.
+func exceptionType(err error) string {
+	for reflect.TypeOf(err) == fmtWrapErrorType {
+		unwrapped := errors.Unwrap(err)
+		if unwrapped == nil {
+			break
+		}
+		err = unwrapped
+	}
+	kind := reflect.TypeOf(err)
+	for kind != nil && kind.Kind() == reflect.Pointer {
+		kind = kind.Elem()
+	}
+	if kind == nil {
+		return ""
+	}
+	return kind.String()
+}
+
 // errorType classifies an error as one of a closed set, which every signal
-// names it by: a record, a span and a metric call one thing one thing. The set
-// is closed so that a label cannot be blown up by whatever a client sends, and
-// each value is a condition with an answer of its own rather than a family.
+// names it by, so that a record, a span and a metric call one failure the one
+// thing. The set is closed so that a label cannot be blown up by whatever a
+// client sends, and each value is a condition with an answer of its own rather
+// than a family.
 func errorType(err error) string {
 	switch {
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
