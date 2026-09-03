@@ -199,7 +199,7 @@ func (s *Server) handler(conn net.Conn) {
 	}()
 
 	session, err := s.establishSession(ctx, conn, &info)
-	endSpan(span, err, slices.Concat(s.Tracer.connectionSpanAttributes(info),
+	s.Tracer.endSpan(span, err, slices.Concat(s.Tracer.connectionSpanAttributes(info),
 		s.Tracer.peerAttributes(info.ClientPeer))...)
 	// A connection that never reached the SSH transport has nothing to log
 	// about a session, and nothing to close.
@@ -459,7 +459,7 @@ auth_requests:
 	if err == nil {
 		info.UpstreamPeer = conn.RemoteAddr()
 	}
-	endSpan(dialSpan, err, slices.Concat(s.Tracer.upstreamServerAttributes(*info),
+	s.Tracer.endSpan(dialSpan, err, slices.Concat(s.Tracer.upstreamServerAttributes(*info),
 		s.Tracer.peerAttributes(info.UpstreamPeer))...)
 	s.Metrics.UpstreamDialed(ctx, err)
 	if err != nil {
@@ -591,7 +591,7 @@ func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *conn
 	info.HandshakeEnd = time.Now()
 	// The handshake is where a session authenticates, so the span covering it
 	// says what each side authenticated by.
-	endSpan(handshakeSpan, err, slices.Concat(s.Tracer.connectionSpanAttributes(*info),
+	s.Tracer.endSpan(handshakeSpan, err, slices.Concat(s.Tracer.connectionSpanAttributes(*info),
 		s.Tracer.authMethodSpanAttributes(*info))...)
 	s.Metrics.HandshakeFinished(ctx, *info, err, info.HandshakeEnd.Sub(info.HandshakeStart))
 	if err != nil {

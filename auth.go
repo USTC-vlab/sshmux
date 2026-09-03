@@ -160,7 +160,7 @@ func (a *instrumentedAuthenticator) Auth(ctx context.Context, request AuthReques
 	start := time.Now()
 	ctx, span := a.tracer.Start(ctx, "authenticate user", spanKindClient)
 	status, response, err := a.inner.Auth(ctx, request, username)
-	endSpan(span, err, slices.Concat(a.tracer.serverAttributes(a.server),
+	a.tracer.endSpan(span, err, slices.Concat(a.tracer.serverAttributes(a.server),
 		a.tracer.authAnswerAttributes(request.Method, status, response))...)
 	a.metrics.AuthFinished(ctx, request.Method, status, err, time.Since(start))
 	return status, response, err
