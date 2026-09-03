@@ -266,9 +266,7 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 			n.clientPort.Int(int(info.ClientPort)))
 	}
 	if info.UpstreamHost != "" {
-		attrs = append(attrs,
-			n.serverAddress.String(info.UpstreamHost),
-			n.serverPort.Int(int(info.UpstreamPort)))
+		attrs = append(attrs, n.upstreamServerAttributes(info)...)
 	}
 	// Who sshmux signs in to the backend as, which is the client's own username
 	// unless the auth API chose another. It is named whichever it is, so that
@@ -350,6 +348,16 @@ func (n attributeNames) authAnswerAttributes(method string, status int, answer *
 			n.sshmuxAuthDisconnectMessage.String(answer.Failure.Message))
 	}
 	return named(attrs)
+}
+
+// upstreamServerAttributes names the backend of a session as its server.*: the
+// address the auth API named, rather than the sshmux.upstream.* pair naming the
+// socket a connection to it actually reached.
+func (n attributeNames) upstreamServerAttributes(info connectionInfo) []attribute.KeyValue {
+	return named([]attribute.KeyValue{
+		n.serverAddress.String(info.UpstreamHost),
+		n.serverPort.Int(int(info.UpstreamPort)),
+	})
 }
 
 // named drops the attributes the convention has no name for, which it resolves
