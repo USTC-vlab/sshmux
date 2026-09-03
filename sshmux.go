@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,8 +199,8 @@ func (s *Server) handler(conn net.Conn) {
 	}()
 
 	session, err := s.establishSession(ctx, conn, &info)
-	endSpan(span, err, append(s.Tracer.connectionSpanAttributes(info),
-		s.Tracer.peerAttributes(info.ClientPeer)...)...)
+	endSpan(span, err, slices.Concat(s.Tracer.connectionSpanAttributes(info),
+		s.Tracer.peerAttributes(info.ClientPeer))...)
 	// A connection that never reached the SSH transport has nothing to log
 	// about a session, and nothing to close.
 	if session == nil {
@@ -243,8 +244,8 @@ func (s *Server) handler(conn net.Conn) {
 		}
 		if pipeErr.DisconnectReason == nil && !errors.Is(err, io.EOF) {
 			s.Logger.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
-				append(s.Logger.errorAttributes(err),
-					s.Logger.connectionAttributes(info)...)...)
+				slices.Concat(s.Logger.errorAttributes(err),
+					s.Logger.connectionAttributes(info))...)
 		}
 	}
 }
@@ -458,8 +459,8 @@ auth_requests:
 	if err == nil {
 		info.UpstreamPeer = conn.RemoteAddr()
 	}
-	endSpan(dialSpan, err, append(s.Tracer.upstreamServerAttributes(*info),
-		s.Tracer.peerAttributes(info.UpstreamPeer)...)...)
+	endSpan(dialSpan, err, slices.Concat(s.Tracer.upstreamServerAttributes(*info),
+		s.Tracer.peerAttributes(info.UpstreamPeer))...)
 	s.Metrics.UpstreamDialed(ctx, err)
 	if err != nil {
 		return err
@@ -590,8 +591,8 @@ func (s *Server) establishSession(ctx context.Context, conn net.Conn, info *conn
 	info.HandshakeEnd = time.Now()
 	// The handshake is where a session authenticates, so the span covering it
 	// says what each side authenticated by.
-	endSpan(handshakeSpan, err, append(s.Tracer.connectionSpanAttributes(*info),
-		s.Tracer.authMethodSpanAttributes(*info)...)...)
+	endSpan(handshakeSpan, err, slices.Concat(s.Tracer.connectionSpanAttributes(*info),
+		s.Tracer.authMethodSpanAttributes(*info))...)
 	s.Metrics.HandshakeFinished(ctx, *info, err, info.HandshakeEnd.Sub(info.HandshakeStart))
 	if err != nil {
 		return session, err
