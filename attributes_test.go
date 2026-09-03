@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"reflect"
 	"slices"
+	"syscall"
 	"testing"
 )
 
@@ -67,6 +69,20 @@ func TestErrorType(t *testing.T) {
 		{context.DeadlineExceeded, "timeout"},
 		{os.ErrDeadlineExceeded, "timeout"},
 		{net.ErrClosed, "closed"},
+		{syscall.ECONNRESET, "reset"},
+		{syscall.EPIPE, "reset"},
+		{syscall.ECONNREFUSED, "refused"},
+		{syscall.EHOSTUNREACH, "unreachable"},
+		{syscall.ENETUNREACH, "unreachable"},
+		{syscall.EADDRINUSE, "in_use"},
+		{syscall.EMFILE, "exhausted"},
+		{fs.ErrNotExist, "not_found"},
+		{fs.ErrPermission, "permission"},
+		{&net.DNSError{Err: "no such host", Name: "auth.invalid"}, "dns"},
+		// The classes are read through whatever wrapped them, which is how they
+		// arrive: a dial says what it was doing before it says what happened.
+		{&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, "refused"},
+		{fmt.Errorf("listen: %w", syscall.EADDRINUSE), "in_use"},
 		{fmt.Errorf("wrapped: %w", os.ErrDeadlineExceeded), "timeout"},
 		{errors.New("boom"), "other"},
 	}

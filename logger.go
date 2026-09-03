@@ -238,8 +238,8 @@ func (l *Logger) sessionAttributes(info connectionInfo, err error, connect, disc
 		slog.Any(string(names.eventCategory), []string{"network"}),
 		slog.Any(string(names.eventType), []string{"connection", "end"}),
 	}
-	// The class of whatever ended it is the one the metrics record, so that a
-	// failure is called the same thing whichever signal reports it.
+	// Whatever ended it is classified the one way, so that a failure is called
+	// the same thing whichever signal reports it.
 	attrs = append(attrs, slogAttributes(names.sessionOutcomeAttributes(info.Established, err))...)
 	attrs = append(attrs,
 		// ECS dates are UTC, so the local zone must not leak into the record.

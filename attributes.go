@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
 	"slices"
 	"strconv"
+	"syscall"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -175,9 +177,9 @@ func conventionAttributeNames(convention AttributeConvention) (attributeNames, e
 func (n attributeNames) success() attribute.KeyValue { return n.eventOutcome.String("success") }
 func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.String("failure") }
 
-// errorAttributes names an error the service carried on from, by the class the
-// metrics classify one by and the text ECS names. It says nothing of a session,
-// having none to say anything about.
+// errorAttributes names an error the service carried on from, by its class and
+// the text ECS names. It says nothing of a session, having none to say anything
+// about.
 func (n attributeNames) errorAttributes(err error) []slog.Attr {
 	return []slog.Attr{
 		slog.String(string(n.errorType), errorType(err)),
@@ -251,6 +253,10 @@ func (n attributeNames) outcome(succeeded bool, err error) []attribute.KeyValue 
 	return named(attrs)
 }
 
+// errorType classifies an error as one of a closed set, which every signal
+// names it by: a record, a span and a metric call one thing one thing. The set
+// is closed so that a label cannot be blown up by whatever a client sends, and
+// each value is a condition with an answer of its own rather than a family.
 func errorType(err error) string {
 	switch {
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
@@ -261,6 +267,30 @@ func errorType(err error) string {
 		return "timeout"
 	case errors.Is(err, net.ErrClosed):
 		return "closed"
+	// A peer that went away mid-stream, as against one that closed in order.
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE):
+		return "reset"
+	// Nothing is listening there, or nothing can be reached: a backend that is
+	// down against a route that is.
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "refused"
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return "unreachable"
+	// The address sshmux was asked to listen on is somebody else's.
+	case errors.Is(err, syscall.EADDRINUSE):
+		return "in_use"
+	// Descriptors ran out, which is what an accept fails with under load.
+	case errors.Is(err, syscall.EMFILE), errors.Is(err, syscall.ENFILE):
+		return "exhausted"
+	// A file the configuration named: the file itself, or a host key.
+	case errors.Is(err, fs.ErrNotExist):
+		return "not_found"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns"
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
