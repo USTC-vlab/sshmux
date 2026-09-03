@@ -180,6 +180,12 @@ func (t *Tracer) authMethodSpanAttributes(info connectionInfo) []attribute.KeyVa
 	return t.attrs.authMethodAttributes(info)
 }
 
+// authAnswerAttributes names what one exchange with the auth API amounted to,
+// for the client span that covers the exchange.
+func (t *Tracer) authAnswerAttributes(method string, status int, answer *AuthResponse) []attribute.KeyValue {
+	return t.attrs.authAnswerAttributes(method, status, answer)
+}
+
 // serverAttributes names the service a client span called.
 func (t *Tracer) serverAttributes(server *url.URL) []attribute.KeyValue {
 	return t.attrs.serverAttributes(server)

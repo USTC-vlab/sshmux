@@ -361,7 +361,7 @@ func (m *Metrics) AuthFinished(ctx context.Context, method string, status int, e
 	if !m.enabled {
 		return
 	}
-	attrs := append(m.attrs.outcomeAttributes(err), m.attrs.sshmuxAuthMethod.String(method), m.attrs.sshmuxAuthStatus.Int(status))
+	attrs := append(m.attrs.outcomeAttributes(err), m.attrs.authRequestAttributes(method, status)...)
 	set := metric.WithAttributeSet(attribute.NewSet(attrs...))
 	m.authRequestsTotal.Add(ctx, 1, set)
 	m.authDuration.Record(ctx, duration.Seconds(), set)

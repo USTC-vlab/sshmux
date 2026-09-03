@@ -418,12 +418,17 @@ auth_requests:
 				if resp.Failure != nil {
 					failure := *resp.Failure
 					if failure.Disconnect {
-						if failure.Reason == 0 {
-							// 11: SSH_DISCONNECT_BY_APPLICATION
-							failure.Reason = 11
+						if failure.Reason != nil && *failure.Reason == 0 {
+							// RFC 4250 assigns the reasons from one, so zero is
+							// not one of them. The client is disconnected by
+							// application either way.
+							s.Logger.LogAttrs(ctx, slog.LevelWarn,
+								"the auth API named zero as a disconnect reason",
+								s.Logger.connectionAttributes(*info)...)
 						}
-						session.Downstream.WriteDisconnectMsg(failure.Reason, failure.Message)
-						return fmt.Errorf("ssh(%d): %s", failure.Reason, failure.Message)
+						reason := parseReasonCode(failure)
+						session.Downstream.WriteDisconnectMsg(reason, failure.Message)
+						return fmt.Errorf("ssh(%d): %s", reason, failure.Message)
 					}
 				}
 				fallthrough

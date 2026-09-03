@@ -323,8 +323,8 @@ The metric names below are the OpenTelemetry ones. The Prometheus endpoint rende
 | `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions. |
 | `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close. |
 | `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency. |
-| `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Requests sent to the auth API.         |
-| `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Auth API request latency.              |
+| `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status_code` | Requests sent to the auth API.    |
+| `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status_code` | Auth API request latency.         |
 | `sshmux.upstream.connections` | Counter        | `{connection}` | `event.outcome`, `error.type`                  | Connection attempts to upstream SSH servers.                      |
 
 `event.outcome` is either `success` or `failure`. On failure, `error.type` classifies the error as one of the [error classes](#error-classes), which are a closed set so that a misbehaving client cannot blow up the time series cardinality.
@@ -363,10 +363,12 @@ Setting `metrics.connection-grouping` to `false` drops all four dimensions, leav
 | ----------------------- | ---------- | ----------------------- | ------------------------------------------------------------ | --------------------------------------------------------- |
 | `establish ssh session` | `server`   | —                       | Connection, peer                                             | Accepting the connection through to a session that is up. |
 | `ssh handshake`         | `internal` | `establish ssh session` | Connection, `sshmux.*.auth.methods`                          | The downstream handshake and authentication.              |
-| `authenticate user`     | `client`   | `ssh handshake`         | `server.*`, peer, `sshmux.auth.method`, `sshmux.auth.status` | One request to the auth API.                              |
+| `authenticate user`     | `client`   | `ssh handshake`         | `server.*`, peer, `sshmux.auth.*`                            | One request to the auth API.                              |
 | `connect upstream`      | `client`   | `ssh handshake`         | `server.*`, peer                                             | Dialling the backend.                                     |
 
 The connection attributes are `session.id`, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address`, `server.port`, `sshmux.upstream.username` and `sshmux.upstream.role`, naming the session, the client that connected and the backend the auth API picked. Those are the logical ends, the ones behind any intermediary. A span's peer, `network.peer.address` and `network.peer.port`, is the address at the other end of the network connection the span itself covers, which its kind fixes — the client that reached `sshmux` for a server span, the service called for a client span, and neither for an internal one. It differs from the logical end where a PROXY protocol hop sits in between, and is missing only from a dial that never connected.
+
+The `authenticate user` span names what one exchange with the auth API amounted to: `sshmux.auth.method` and `sshmux.auth.status_code` for what it was asked and what it answered, `sshmux.auth.challenges` for how many an answer asked for, which is what tells a `200` that granted a session from one that wanted more, and `sshmux.auth.disconnect.reason_code` with `sshmux.auth.disconnect.message` for what a refusal told the client where it closed the connection. A refusal that lets the client try again names neither, the API leaving both unset where it does not disconnect.
 
 The kinds are also what a collector builds a service graph from: `sshmux` serves the session, and calls the auth API and the backend on its behalf.
 
@@ -472,4 +474,4 @@ disconnects the user.
 | ------------ | -------- | --------------------------------------------------------------------------- | -------- |
 | `message`    | `string` | Message from the server to describe the failure.                            | Yes      |
 | `disconnect` | `string` | Whether to disconnect the downstream user. Defaults to `false`.             | No       |
-| `reason`     | `uint`   | SSH disconnect reason code. Defaults to `11` (`DISCONNECT_BY_APPLICATION`). | No       |
+| `reason`     | `uint`   | SSH disconnect reason code, from [RFC 4250](https://www.rfc-editor.org/rfc/rfc4250#section-4.2.2). Defaults to `11` (`DISCONNECT_BY_APPLICATION`). | No |
