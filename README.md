@@ -32,8 +32,8 @@ SSH settings configure the integrated SSH server in `sshmux`. They are grouped u
 | --------------------------- | ---------- | ------------------------------------------------------------------------------------ | -------- | -------------------------------------------------- |
 | `banner`                    | `string`   | SSH banner to send to downstream.                                                    | No       | `"Welcome to Vlab\n"`                              |
 | `host-keys`                 | `[]SSHKey` | Paths to SSH host key files with which `sshmux` identifies itself.                   | Yes      | See [`fixtures/config.toml`](fixtures/config.toml) |
-| `handshake-timeout-seconds` | `uint`     | Deadline for the complete downstream SSH handshake and authentication. Defaults to 30 seconds. | No | `30` |
-| `upstream-timeout-seconds`  | `uint`     | Deadline for connecting to and authenticating with the upstream SSH server. Defaults to 30 seconds. | No | `30` |
+| `handshake-timeout-seconds` | `uint`     | Deadline for the complete downstream SSH handshake and authentication. Defaults to 30 seconds. | No | `30`                                           |
+| `upstream-timeout-seconds`  | `uint`     | Deadline for connecting to and authenticating with the upstream SSH server. Defaults to 30 seconds. | No | `30`                                      |
 
 ### Auth Settings
 
@@ -91,7 +91,7 @@ The convention names the attributes for both sinks alike. What differs between t
 The UDP sink writes one JSON document per datagram. It is configured under `logger.udp` in the TOML file.
 
 | Key       | Type     | Description                                                            | Required | Example            |
-| --------- | -------- | ------------------------------------------------------------------------ | -------- | ------------------ |
+| --------- | -------- | ---------------------------------------------------------------------- | -------- | ------------------ |
 | `enabled` | `bool`   | Whether the UDP sink is enabled. Defaults to `false`.                  | No       | `true`             |
 | `address` | `string` | UDP host and port to send records to. Defaults to `"127.0.0.1:5556"`.  | No       | `"127.0.0.1:5556"` |
 | `shape`   | `string` | Document each datagram is written as, `"ecs"`, `"otel"` or `"legacy"`. Defaults to `"ecs"`, or to `"legacy"` where `logger.endpoint` is set. | No | `"otel"` |
@@ -142,11 +142,11 @@ Metrics settings configure the [OpenTelemetry](https://opentelemetry.io) metrics
 | Key                | Type          | Description                                                                                                   | Required | Example                              |
 | ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------ |
 | `enabled`          | `bool`        | Whether metrics collection is enabled. Defaults to `false`.                                                   | No       | `true`                               |
-| `convention`       | `string`      | Schema the attributes are named after, `"default"` or `"ecs"`. Defaults to `"default"`. See [Attribute Conventions](#attribute-conventions). | No | `"ecs"`          |
+| `convention`       | `string`      | Schema the attributes are named after, `"default"` or `"ecs"`. Defaults to `"default"`. See [Attribute Conventions](#attribute-conventions). | No | `"ecs"`     |
 | `service-name`     | `string`      | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                                       | No       | `"sshmux-vlab"`                      |
 | `attributes`       | `[]Attribute` | Extra resource attributes attached to every metric, e.g. to tag the deployment environment.                   | No       | `[{ name = "env", value = "prod" }]` |
 | `interval-seconds` | `uint`        | Interval at which metrics are pushed to the OTLP endpoint. Defaults to 60 seconds.                            | No       | `60`                                 |
-| `connection-grouping` | `bool`     | Whether the connection metrics carry the `user.name`, `server.address` and `server.port` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false`   |
+| `connection-grouping` | `bool`     | Whether the connection metrics carry the `user.name`, `server.address` and `server.port` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false` |
 
 `Attribute` is a table with a `name` and a `value`, both `string`s.
 
@@ -233,10 +233,10 @@ PROXY protocol settings configures [PROXY protocol](https://www.haproxy.com/blog
 
 `logger.convention`, `metrics.convention` and `tracer.convention` select how each attribute is named:
 
-| Value | Resolves each attribute against |
-| --- | --- |
+| Value     | Resolves each attribute against                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------- |
 | `default` | the [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/), then the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
-| `ecs` | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux` |
+| `ecs`     | the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), then `sshmux`       |
 
 They differ in the following attributes:
 
@@ -313,12 +313,12 @@ The metric names below are the OpenTelemetry ones. The Prometheus endpoint rende
 | ---------------------------- | --------------- | -------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
 | `sshmux.connections`         | Counter         | `{connection}` | —                                              | Connections accepted by `sshmux`.                                 |
 | `sshmux.connections.active`  | UpDownCounter   | `{connection}` | —                                              | Connections currently being served.                               |
-| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions.                          |
-| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close.               |
-| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency.      |
-| `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Requests sent to the auth API.   |
-| `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Auth API request latency.        |
-| `sshmux.upstream.connections`| Counter         | `{connection}` | `event.outcome`, `error.type`                     | Connection attempts to upstream SSH servers.          |
+| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions.          |
+| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close. |
+| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency. |
+| `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Requests sent to the auth API.         |
+| `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Auth API request latency.              |
+| `sshmux.upstream.connections` | Counter        | `{connection}` | `event.outcome`, `error.type`                  | Connection attempts to upstream SSH servers.                      |
 
 `event.outcome` is either `success` or `failure`. On failure, `error.type` classifies the error as one of the [error classes](#error-classes), which are a closed set so that a misbehaving client cannot blow up the time series cardinality.
 
@@ -411,7 +411,7 @@ and disconnects the user.
 | ------------- | -------- | --------------------------------------------------------------------------- | -------- |
 | `host`        | `string` | Host name or IP of upstream SSH server.                                     | Yes      |
 | `port`        | `uint`   | Port number of upstream SSH server. Defaults to `22`.                       | No       |
-| `username`    | `string` | User name for upstream SSH authentication. Defaults to the downstream user name. | No   |
+| `username`    | `string` | User name for upstream SSH authentication. Defaults to the downstream user name. | No  |
 | `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `password`    | `string` | Password for authenticating with upstream.                                  | No       |
