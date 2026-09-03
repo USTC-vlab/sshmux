@@ -971,8 +971,8 @@ func TestLogRecordEndedBy(t *testing.T) {
 func TestLogRecordSessionFault(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
 	logger.LogAttrs(context.Background(), slog.LevelWarn, "sshmux lost a session",
-		append(logger.errorAttributes(io.ErrUnexpectedEOF),
-			logger.connectionAttributes(testSession)...)...)
+		slices.Concat(logger.errorAttributes(io.ErrUnexpectedEOF),
+			logger.connectionAttributes(testSession))...)
 
 	record := awaitRecord(t, records)
 	// A session that ended badly still happened, so this is not an error of
