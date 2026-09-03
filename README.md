@@ -60,7 +60,7 @@ The following settings are only used by `legacy` auth APIs. They are also groupe
 
 #### Recovery Settings
 
-Recovery settings configures Vlab recovery service support of `sshmux` for `legacy` auth APIs. They are grouped under `recovery` in the TOML file.
+Recovery settings configures Vlab recovery service support of `sshmux` for `legacy` auth APIs, which name the [`role`](#upstream) `recovery` on the upstream they return for the usernames given here. They are grouped under `recovery` in the TOML file.
 
 | Key         | Type       | Description                                           | Required | Example                   |
 | ----------- | ---------- | ----------------------------------------------------- | -------- | ------------------------- |
@@ -146,7 +146,7 @@ Metrics settings configure the [OpenTelemetry](https://opentelemetry.io) metrics
 | `service-name`     | `string`      | Value of the `service.name` resource attribute. Defaults to `"sshmux"`.                                       | No       | `"sshmux-vlab"`                      |
 | `attributes`       | `[]Attribute` | Extra resource attributes attached to every metric, e.g. to tag the deployment environment.                   | No       | `[{ name = "env", value = "prod" }]` |
 | `interval-seconds` | `uint`        | Interval at which metrics are pushed to the OTLP endpoint. Defaults to 60 seconds.                            | No       | `60`                                 |
-| `connection-grouping` | `bool`     | Whether the connection metrics carry the `user.name`, `server.address` and `server.port` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false` |
+| `connection-grouping` | `bool`     | Whether the connection metrics carry the `user.name`, `sshmux.upstream.username`, `server.address` and `server.port` dimensions. Defaults to `true`. See [Connection Grouping](#connection-grouping). | No | `false` |
 
 `Attribute` is a table with a `name` and a `value`, both `string`s.
 
@@ -282,6 +282,8 @@ It names `sshmux.handshake.start` and `sshmux.handshake.end`, the moments the do
 
 It names `sshmux.downstream.auth.methods` and `sshmux.upstream.auth.methods`, the methods each side of the session authenticated by: the client to `sshmux`, and `sshmux` to the backend. Authenticating is a sequence rather than one exchange — a key accepted before challenges is one method and the challenges another — so a method that authenticates in part counts as much as one that completes it, and several rounds of one method count as the one. Both lists hold what was accepted and only that, so a session that ended still knocking names nothing on that side. What answered a method belongs to neither: `sshmux.auth.*` names one request to the auth API, a [span](#tracing) and a [metric](#exported-metrics) of its own.
 
+It names `sshmux.upstream.username`, the account `sshmux` signed in to the backend as, which is the client's own username unless the auth API [chose another](#upstream). Where that API also named a [`role`](#upstream) on the upstream it returned, the record names `sshmux.upstream.role`, and where it did not the attribute is absent rather than empty.
+
 It also names the two connections a session is actually made of, against the logical ends above: `sshmux.downstream.address` and `sshmux.downstream.port` for the address the client connected from, and `sshmux.upstream.address` and `sshmux.upstream.port` for the one the upstream connection ends at. Where a [PROXY protocol](#proxy-protocol-settings) hop sits on either side, these are the hop's, while `client.address` is the client the header claims and `server.address` is the backend the auth API named. A span says which end it means by its kind, but one record covers both connections, so `network.peer.address` would not say.
 
 The names above are the `default` convention's, which `ecs` renames as described under [Attribute Conventions](#attribute-conventions). The OTLP sink carries them as the log record's attributes, alongside the resource named by `logger.service-name` and `logger.attributes`, and carries the record's own time, level and message as the fields the data model has for them. The UDP sink writes one JSON document per datagram, in the shape [`logger.udp.shape`](#logger-udp-settings) asks for. Under the default shape and convention, abbreviated to a few of its attributes:
@@ -318,14 +320,16 @@ The metric names below are the OpenTelemetry ones. The Prometheus endpoint rende
 | ---------------------------- | --------------- | -------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
 | `sshmux.connections`         | Counter         | `{connection}` | —                                              | Connections accepted by `sshmux`.                                 |
 | `sshmux.connections.active`  | UpDownCounter   | `{connection}` | —                                              | Connections currently being served.                               |
-| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions.          |
-| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close. |
-| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency. |
+| `sshmux.sessions`            | Counter         | `{session}`    | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Finished SSH proxy sessions. |
+| `sshmux.session.duration`    | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Session lifetime, from accept to close. |
+| `sshmux.handshake.duration`  | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.upstream.role`, [connection grouping](#connection-grouping) | Downstream handshake and authentication latency. |
 | `sshmux.auth.requests`       | Counter         | `{request}`    | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Requests sent to the auth API.         |
 | `sshmux.auth.duration`       | Histogram       | `s`            | `event.outcome`, `error.type`, `sshmux.auth.method`, `sshmux.auth.status` | Auth API request latency.              |
 | `sshmux.upstream.connections` | Counter        | `{connection}` | `event.outcome`, `error.type`                  | Connection attempts to upstream SSH servers.                      |
 
 `event.outcome` is either `success` or `failure`. On failure, `error.type` classifies the error as one of the [error classes](#error-classes), which are a closed set so that a misbehaving client cannot blow up the time series cardinality.
+
+`sshmux.upstream.role` is what the auth API named on the upstream it returned, empty where it named none, and is on every series rather than only the ones with a role: a label a series sometimes carries is two shapes of series. Its values are not a closed set, but they are the operator's own auth API's to choose rather than a client's to inflate, so how many there are is a matter of design. Which host `server.address` holds does not answer the same question, and is not there at all once [connection grouping](#connection-grouping) is off.
 
 For `sshmux.sessions` and `sshmux.session.duration`, `event.outcome` reports whether the session was *established*: an SSH client ends a healthy session by disconnecting, so how a session terminated once it was up is not counted against it. Use `sshmux.handshake.duration` to tell apart where an unestablished session failed.
 
@@ -336,6 +340,7 @@ For `sshmux.sessions` and `sshmux.session.duration`, `event.outcome` reports whe
 | Attribute          | Description                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------ |
 | `user.name`        | Username the client authenticated as.                                                |
+| `sshmux.upstream.username` | Account `sshmux` signed in to the backend as, which the auth API may have chosen. |
 | `server.address`   | Backend host, as returned by the auth API and before any PROXY protocol override.    |
 | `server.port`      | Backend port, from the same response.                                                |
 
@@ -343,7 +348,7 @@ Each is recorded as `unknown` when it is not yet known, which is the case for a 
 
 `sshmux.connections` and `sshmux.connections.active` are recorded when a connection is accepted, before any of them is known, so they carry no grouping.
 
-Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving one series per outcome.
+Setting `metrics.connection-grouping` to `false` drops all four dimensions, leaving one series per outcome.
 
 > [!IMPORTANT]
 > **Turn the grouping off once your user base approaches 2000.** Since users normally map one-to-one onto backends, the two dimensions together produce roughly one time series per user, and that count only ever grows, because the metrics are cumulative. The OpenTelemetry SDK caps each instrument at 2000 series by default: past the cap, measurements do not stop being recorded, but they collapse into a single series marked `otel.metric.overflow="true"`, and which users kept a series of their own comes down to whoever connected first after startup. Grouped metrics are therefore only meaningful below the cap.
@@ -361,7 +366,7 @@ Setting `metrics.connection-grouping` to `false` drops both dimensions, leaving 
 | `authenticate user`     | `client`   | `ssh handshake`         | `server.*`, peer, `sshmux.auth.method`, `sshmux.auth.status` | One request to the auth API.                              |
 | `connect upstream`      | `client`   | `ssh handshake`         | `server.*`, peer                                             | Dialling the backend.                                     |
 
-The connection attributes are `session.id`, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address` and `server.port`, naming the session, the client that connected and the backend the auth API picked. Those are the logical ends, the ones behind any intermediary. A span's peer, `network.peer.address` and `network.peer.port`, is the address at the other end of the network connection the span itself covers, which its kind fixes — the client that reached `sshmux` for a server span, the service called for a client span, and neither for an internal one. It differs from the logical end where a PROXY protocol hop sits in between, and is missing only from a dial that never connected.
+The connection attributes are `session.id`, `network.protocol.name`, `network.protocol.version`, `user.name`, `client.address`, `client.port`, `server.address`, `server.port`, `sshmux.upstream.username` and `sshmux.upstream.role`, naming the session, the client that connected and the backend the auth API picked. Those are the logical ends, the ones behind any intermediary. A span's peer, `network.peer.address` and `network.peer.port`, is the address at the other end of the network connection the span itself covers, which its kind fixes — the client that reached `sshmux` for a server span, the service called for a client span, and neither for an internal one. It differs from the logical end where a PROXY protocol hop sits in between, and is missing only from a dial that never connected.
 
 The kinds are also what a collector builds a service graph from: `sshmux` serves the session, and calls the auth API and the backend on its behalf.
 
@@ -420,6 +425,7 @@ and disconnects the user.
 | `private_key` | `string` | Private key for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `certificate` | `string` | Certificate for authenticating with upstream, serialized in OpenSSH format. | No       |
 | `password`    | `string` | Password for authenticating with upstream.                                  | No       |
+| `role`        | `string` | Label for this upstream, carried into `sshmux`'s telemetry and never read by it. | No  |
 
 ##### `Proxy`
 

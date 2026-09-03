@@ -99,6 +99,12 @@ type attributeNames struct {
 	sshmuxDownstreamPort    attribute.Key
 	sshmuxUpstreamAddress   attribute.Key
 	sshmuxUpstreamPort      attribute.Key
+	// The username sshmux authenticates to the backend as, which the auth API
+	// may choose rather than the client, where user.name is the user who
+	// connected. The label the auth API put on that upstream follows it, which
+	// sshmux carries and does not interpret.
+	sshmuxUpstreamUsername attribute.Key
+	sshmuxUpstreamRole     attribute.Key
 }
 
 // defaultAttributeNames resolves each attribute against the OpenTelemetry
@@ -136,6 +142,8 @@ var defaultAttributeNames = attributeNames{
 	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
 	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
 	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
+	sshmuxUpstreamUsername:      attribute.Key("sshmux.upstream.username"),
+	sshmuxUpstreamRole:          attribute.Key("sshmux.upstream.role"),
 }
 
 // ecsAttributeNames resolves against the Elastic Common Schema only, which does
@@ -177,6 +185,8 @@ var ecsAttributeNames = attributeNames{
 	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
 	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
 	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
+	sshmuxUpstreamUsername:      attribute.Key("sshmux.upstream.username"),
+	sshmuxUpstreamRole:          attribute.Key("sshmux.upstream.role"),
 }
 
 // conventionAttributeNames resolves the configured convention.
@@ -236,6 +246,17 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 			n.serverAddress.String(info.UpstreamHost),
 			n.serverPort.Int(int(info.UpstreamPort)))
 	}
+	// Who sshmux signs in to the backend as, which is the client's own username
+	// unless the auth API chose another. It is named whichever it is, so that
+	// the account a session reached is read without inferring it from user.name.
+	if info.UpstreamUsername != "" {
+		attrs = append(attrs, n.sshmuxUpstreamUsername.String(info.UpstreamUsername))
+	}
+	// Only where the API labelled one: an empty role on every session is noise
+	// a datagram pays for.
+	if info.UpstreamRole != "" {
+		attrs = append(attrs, n.sshmuxUpstreamRole.String(info.UpstreamRole))
+	}
 	return named(attrs)
 }
 
@@ -248,6 +269,28 @@ func (n attributeNames) authMethodAttributes(info connectionInfo) []attribute.Ke
 	}
 	if len(info.UpstreamAuthMethods) > 0 {
 		attrs = append(attrs, n.sshmuxUpstreamAuthMethods.StringSlice(info.UpstreamAuthMethods))
+	}
+	return named(attrs)
+}
+
+// connectionMetricAttributes names the dimensions the connection metrics carry:
+// the role on every series, and the ones the grouping adds where it is on.
+//
+// Unlike a record, which names a role only where there is one, every series
+// carries it: a label a series sometimes has is two shapes of series. The
+// values are the auth API's to choose, and it is the operator's own, so the
+// cardinality is theirs by design rather than a client's to inflate. For the
+// same reason a dimension not yet known is recorded as unknownAttributeValue
+// rather than left out.
+func (n attributeNames) connectionMetricAttributes(info connectionInfo, grouped bool) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{n.sshmuxUpstreamRole.String(info.UpstreamRole)}
+	if grouped {
+		attrs = append(attrs,
+			n.userName.String(valueOrDefault(info.Username, unknownAttributeValue)),
+			n.sshmuxUpstreamUsername.String(valueOrDefault(info.UpstreamUsername, unknownAttributeValue)),
+			n.serverAddress.String(valueOrDefault(info.UpstreamHost, unknownAttributeValue)),
+			n.serverPort.Int(int(info.UpstreamPort)),
+		)
 	}
 	return named(attrs)
 }

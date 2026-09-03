@@ -891,6 +891,44 @@ func TestLogRecordAuthenticatedByNothing(t *testing.T) {
 	}
 }
 
+// TestLogRecordUpstreamRole covers the label the auth API put on an upstream,
+// which the record carries because the API said it and no address reveals it,
+// and which a session it labelled none on leaves out.
+func TestLogRecordUpstreamRole(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	recovering := testSession
+	recovering.UpstreamRole = "recovery"
+	connect := time.Unix(1700000000, 0)
+	logSessionRecord(logger, recovering, connect, connect.Add(testSessionLength))
+
+	if record := awaitRecord(t, records); record["sshmux.upstream.role"] != "recovery" {
+		t.Errorf("sshmux.upstream.role = %v, want what the API answered", record["sshmux.upstream.role"])
+	}
+
+	logSessionRecord(logger, testSession, connect, connect.Add(testSessionLength))
+	if record := awaitRecord(t, records); record["sshmux.upstream.role"] != nil {
+		t.Errorf("sshmux.upstream.role = %v, want nothing where the API named none", record["sshmux.upstream.role"])
+	}
+}
+
+// TestLogRecordUpstreamUsername covers the account a session reached, which is
+// the client's own unless the auth API chose another and is named either way.
+func TestLogRecordUpstreamUsername(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	chosen := testSession
+	chosen.UpstreamUsername = "ubuntu"
+	connect := time.Unix(1700000000, 0)
+	logSessionRecord(logger, chosen, connect, connect.Add(testSessionLength))
+
+	record := awaitRecord(t, records)
+	if record["sshmux.upstream.username"] != "ubuntu" {
+		t.Errorf("sshmux.upstream.username = %v, want the account the API chose", record["sshmux.upstream.username"])
+	}
+	if record["user.name"] != "vlab" {
+		t.Errorf("user.name = %v, want the user who connected", record["user.name"])
+	}
+}
+
 // TestLegacyShapeIgnoresTheSockets checks that the addresses sshmux is really
 // connected to and from reach the schema's sinks without reaching this one,
 // whose fields are fixed.

@@ -374,6 +374,8 @@ auth_requests:
 				// Report the backend the API picked, not the PROXY protocol
 				// hop that the address below may be rewritten to.
 				info.UpstreamHost, info.UpstreamPort = upstreamResp.Host, upstreamResp.Port
+				info.UpstreamUsername = upstreamResp.Username
+				info.UpstreamRole = upstreamResp.Role
 				if resp.Proxy != nil {
 					proxyConfig := *resp.Proxy
 					// parse protocol version
@@ -520,7 +522,9 @@ auth_requests:
 		if err != nil {
 			return err
 		}
-		req.SetUser(upstream.Username)
+		// Every request reaching the backend carries the username it knows the
+		// user by, which the auth API may have chosen rather than the client.
+		req.User = upstream.Username
 		err = session.Upstream.WriteAuthRequest(req)
 		if err != nil {
 			return err

@@ -14,6 +14,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// recoveryRole labels an upstream this API routed to the recovery service in
+// place of the backend the response named.
+const recoveryRole = "recovery"
+
 type LegacyAuthRequestPublicKey struct {
 	AuthType      string `json:"auth_type"`
 	UnixUsername  string `json:"unix_username"`
@@ -41,6 +45,7 @@ type LegacyAuthResponse struct {
 
 type LegacyAuthUpstream struct {
 	Host          string
+	Role          string
 	PrivateKey    string
 	Certificate   string
 	Password      *string
@@ -141,6 +146,7 @@ func (auth *LegacyAuthenticator) Auth(ctx context.Context, request AuthRequest, 
 		resp := AuthResponse{
 			Upstream: &AuthUpstream{
 				Host:        address.Addr().String(),
+				Role:        upstream.Role,
 				Port:        address.Port(),
 				PrivateKey:  upstream.PrivateKey,
 				Certificate: upstream.Certificate,
@@ -193,6 +199,7 @@ func (auth LegacyAuthenticator) AuthUser(ctx context.Context, request any, usern
 	var upstream LegacyAuthUpstream
 	if slices.Contains(auth.Recovery.Usernames, username) {
 		upstream.Host = auth.Recovery.Address
+		upstream.Role = recoveryRole
 		password := fmt.Sprintf("%d %s", response.Id, auth.Recovery.Token)
 		upstream.Password = &password
 	} else {
