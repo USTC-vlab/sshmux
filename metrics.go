@@ -288,7 +288,7 @@ func (m *Metrics) Start() error {
 	go func() {
 		if err := m.promServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			m.logger.LogAttrs(context.Background(), slog.LevelError,
-				"sshmux stopped serving the Prometheus endpoint", m.logger.attrs.errorAttributes(err)...)
+				"sshmux stopped serving the Prometheus endpoint", m.logger.errorAttributes(err)...)
 		}
 	}()
 	return nil
@@ -317,7 +317,7 @@ func (m *Metrics) Shutdown(ctx context.Context) {
 	if m.provider != nil {
 		if err := m.provider.Shutdown(ctx); err != nil {
 			m.logger.LogAttrs(ctx, slog.LevelError,
-				"sshmux could not shut the metrics down", m.logger.attrs.errorAttributes(err)...)
+				"sshmux could not shut the metrics down", m.logger.errorAttributes(err)...)
 		}
 		m.provider = nil
 	}

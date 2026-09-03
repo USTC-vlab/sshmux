@@ -86,8 +86,8 @@ func TestExceptionType(t *testing.T) {
 	// It reaches the record under the name the convention gives it.
 	var named string
 	for _, attr := range defaultAttributeNames.errorAttributes(listen) {
-		if attr.Key == string(defaultAttributeNames.exceptionType) {
-			named = attr.Value.String()
+		if attr.Key == defaultAttributeNames.exceptionType {
+			named = attr.Value.AsString()
 		}
 	}
 	if named != "net.OpError" {

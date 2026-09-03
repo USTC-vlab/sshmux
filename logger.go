@@ -208,7 +208,7 @@ func (l *Logger) Shutdown(ctx context.Context) {
 	if l.provider != nil {
 		if err := l.provider.Shutdown(ctx); err != nil {
 			slog.LogAttrs(ctx, slog.LevelError, "sshmux could not shut the logger down",
-				defaultAttributeNames.errorAttributes(err)...)
+				slogAttributes(defaultAttributeNames.errorAttributes(err))...)
 		}
 		l.provider = nil
 	}
@@ -250,7 +250,7 @@ func (l *Logger) sessionAttributes(info connectionInfo, err error, connect, disc
 		slog.Time(string(names.sshmuxHandshakeEnd), info.HandshakeEnd.UTC()),
 	)
 	// The connection is named by the same builder the spans are built from.
-	attrs = append(attrs, slogAttributes(names.connectionAttributes(info))...)
+	attrs = append(attrs, l.connectionAttributes(info)...)
 	// The spans name one auth request each. A record covers the session they
 	// were made for, so it names the methods it went through rather than any
 	// one of them, and the status of each stays on the request that answered it.
@@ -262,7 +262,27 @@ func (l *Logger) sessionAttributes(info connectionInfo, err error, connect, disc
 		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...)
 	attrs = append(attrs, slogAttributes(socketAttributes(info.UpstreamPeer,
 		names.sshmuxUpstreamAddress, names.sshmuxUpstreamPort))...)
-	return attrs
+	return namedRecord(attrs)
+}
+
+// errorAttributes and connectionAttributes name an error and a connection as a
+// record's attributes. The vocabulary itself speaks OpenTelemetry, which the
+// spans and the metrics are built from as well; a record is what needs them
+// rendered.
+func (l *Logger) errorAttributes(err error) []slog.Attr {
+	return slogAttributes(l.attrs.errorAttributes(err))
+}
+
+func (l *Logger) connectionAttributes(info connectionInfo) []slog.Attr {
+	return slogAttributes(l.attrs.connectionAttributes(info))
+}
+
+// namedRecord drops the record attributes the convention has no name for, as
+// named does for the vocabulary's own type. A builder that has to name an
+// attribute itself, the record's times and lists having no equivalent to name
+// them through, returns through it instead.
+func namedRecord(attrs []slog.Attr) []slog.Attr {
+	return slices.DeleteFunc(attrs, func(attr slog.Attr) bool { return attr.Key == "" })
 }
 
 // slogAttributes renders OpenTelemetry attributes as their slog equivalents.
@@ -310,9 +330,9 @@ func (l *Logger) sessionStartAttributes(info connectionInfo, start time.Time) []
 		slog.Any(string(names.eventType), []string{"connection", "start"}),
 		slog.Time(string(names.eventStart), start.UTC()),
 	}
-	attrs = append(attrs, slogAttributes(names.connectionAttributes(info))...)
-	return append(attrs, slogAttributes(socketAttributes(info.ClientPeer,
-		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...)
+	attrs = append(attrs, l.connectionAttributes(info)...)
+	return namedRecord(append(attrs, slogAttributes(socketAttributes(info.ClientPeer,
+		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...))
 }
 
 // eventNameProcessor moves the class of event a record is into the field the
