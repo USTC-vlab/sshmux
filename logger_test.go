@@ -929,6 +929,72 @@ func TestLogRecordUpstreamUsername(t *testing.T) {
 	}
 }
 
+// TestLogRecordEndedBy covers which of a session's two connections ended it,
+// the ordinary answer being the client and the interesting one the backend
+// going away under an established session.
+func TestLogRecordEndedBy(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	connect := time.Unix(1700000000, 0)
+
+	dropped := testSession
+	dropped.EndedBy = "upstream"
+	logSessionRecord(logger, dropped, connect, connect.Add(testSessionLength))
+	record := awaitRecord(t, records)
+	if record["event.reason"] != "upstream" {
+		t.Errorf("event.reason = %v, want the backend that went away", record["event.reason"])
+	}
+	// It ended as an established session all the same: how one ends is not
+	// whether it happened.
+	if record["event.outcome"] != "success" {
+		t.Errorf("event.outcome = %v, want the session it was", record["event.outcome"])
+	}
+
+	// A session sshmux closed itself, as it does for every one still running
+	// when it shuts down, is neither peer's doing.
+	stopped := testSession
+	stopped.EndedBy = "proxy"
+	logSessionRecord(logger, stopped, connect, connect.Add(testSessionLength))
+	if record := awaitRecord(t, records); record["event.reason"] != "proxy" {
+		t.Errorf("event.reason = %v, want sshmux itself", record["event.reason"])
+	}
+
+	// A session that never reached the pipe has no answer to give.
+	logSessionRecord(logger, testSession, connect, connect.Add(testSessionLength))
+	if record := awaitRecord(t, records); record["event.reason"] != nil {
+		t.Errorf("event.reason = %v, want nothing where no session was piped", record["event.reason"])
+	}
+}
+
+// TestLogRecordSessionFault covers a session that ended without either of its
+// connections saying so, which is reported beside the session's own record and
+// names the session it belongs to.
+func TestLogRecordSessionFault(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	logger.LogAttrs(context.Background(), slog.LevelWarn, "sshmux lost a session",
+		append(logger.errorAttributes(io.ErrUnexpectedEOF),
+			logger.connectionAttributes(testSession)...)...)
+
+	record := awaitRecord(t, records)
+	// A session that ended badly still happened, so this is not an error of
+	// sshmux's to answer for.
+	if record["log.level"] != "WARN" {
+		t.Errorf("log.level = %v, want a warning rather than an error", record["log.level"])
+	}
+	if record["error.type"] != "eof" {
+		t.Errorf("error.type = %v, want the class the metrics use", record["error.type"])
+	}
+	if record["session.id"] != testSession.SessionID {
+		t.Errorf("session.id = %v, want the session it belongs to", record["session.id"])
+	}
+	// The session's own record says how it ended; this one says only that it
+	// did not end well.
+	for _, key := range []string{"otel.event.name", "event.outcome", "event.reason"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want it left to the session's record", key, value)
+		}
+	}
+}
+
 // TestLegacyShapeIgnoresTheSockets checks that the addresses sshmux is really
 // connected to and from reach the schema's sinks without reaching this one,
 // whose fields are fixed.

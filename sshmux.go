@@ -18,7 +18,6 @@ import (
 
 	reuse "github.com/libp2p/go-reuseport"
 	"github.com/pires/go-proxyproto"
-	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -229,9 +228,24 @@ func (s *Server) handler(conn net.Conn) {
 			err = session.RunPipe()
 		}
 	}
-	if err != nil && err != io.EOF {
-		slog.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
-			slogAttributes(defaultAttributeNames.errorAttributes(err))...)
+	// A session ends when one of its two connections does, which is ordinarily
+	// the client saying it is done. Only a connection that went away without
+	// saying so is a fault, and only a session that was piped can have one: a
+	// handshake that failed is the session record's own business.
+	var pipeErr *ssh.PipeError
+	if errors.As(err, &pipeErr) {
+		info.EndedBy = pipeErr.EndedBy
+		if s.ctx.Err() != nil {
+			// Shutting down closes the connection under the session, so neither
+			// peer ended it however the read that noticed happened to fail.
+			info.EndedBy = "proxy"
+			return
+		}
+		if pipeErr.DisconnectReason == nil && !errors.Is(err, io.EOF) {
+			s.Logger.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
+				append(s.Logger.errorAttributes(err),
+					s.Logger.connectionAttributes(info)...)...)
+		}
 	}
 }
 
@@ -441,15 +455,11 @@ auth_requests:
 	// Stage 2: connect to upstream
 	_, dialSpan := s.Tracer.Start(ctx, "connect upstream", spanKindClient)
 	conn, err := net.DialTimeout("tcp", upstream.Address, s.UpstreamTimeout)
-	dialAttrs := []attribute.KeyValue{
-		s.Tracer.attrs.serverAddress.String(info.UpstreamHost),
-		s.Tracer.attrs.serverPort.Int(int(info.UpstreamPort)),
-	}
 	if err == nil {
 		info.UpstreamPeer = conn.RemoteAddr()
-		dialAttrs = append(dialAttrs, s.Tracer.peerAttributes(conn.RemoteAddr())...)
 	}
-	endSpan(dialSpan, err, dialAttrs...)
+	endSpan(dialSpan, err, append(s.Tracer.upstreamServerAttributes(*info),
+		s.Tracer.peerAttributes(info.UpstreamPeer)...)...)
 	s.Metrics.UpstreamDialed(ctx, err)
 	if err != nil {
 		return err

@@ -191,6 +191,12 @@ func (t *Tracer) serverAttributes(server *url.URL) []attribute.KeyValue {
 	return t.attrs.serverAttributes(server)
 }
 
+// upstreamServerAttributes names the backend a client span dialled, under the
+// convention the tracer was configured with.
+func (t *Tracer) upstreamServerAttributes(info connectionInfo) []attribute.KeyValue {
+	return t.attrs.upstreamServerAttributes(info)
+}
+
 // peerAttributes names the other end of the network connection a span covers:
 // where it was reached from for a server span, and what it reached out to for
 // a client span.
