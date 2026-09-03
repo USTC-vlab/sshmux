@@ -157,7 +157,7 @@ func (s *Server) serve() {
 					return
 				}
 				s.Logger.LogAttrs(s.ctx, slog.LevelError,
-					"sshmux could not accept a connection", s.Logger.attrs.errorAttributes(err)...)
+					"sshmux could not accept a connection", s.Logger.errorAttributes(err)...)
 				continue
 			}
 			s.wg.Add(1)
@@ -231,7 +231,7 @@ func (s *Server) handler(conn net.Conn) {
 	}
 	if err != nil && err != io.EOF {
 		slog.LogAttrs(ctx, slog.LevelWarn, "sshmux lost a session",
-			defaultAttributeNames.errorAttributes(err)...)
+			slogAttributes(defaultAttributeNames.errorAttributes(err))...)
 	}
 }
 

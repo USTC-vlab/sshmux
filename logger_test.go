@@ -400,7 +400,7 @@ func TestServerLogsNothingBeforeHandshake(t *testing.T) {
 func TestLogRecordServiceError(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
 	logger.LogAttrs(context.Background(), slog.LevelError,
-		"sshmux could not accept a connection", logger.attrs.errorAttributes(os.ErrDeadlineExceeded)...)
+		"sshmux could not accept a connection", logger.errorAttributes(os.ErrDeadlineExceeded)...)
 
 	record := awaitRecord(t, records)
 	if record["message"] != "sshmux could not accept a connection" {
@@ -775,7 +775,7 @@ func TestServiceErrorsReachTheConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger.LogAttrs(context.Background(), slog.LevelError,
-		"sshmux could not accept a connection", logger.attrs.errorAttributes(os.ErrDeadlineExceeded)...)
+		"sshmux could not accept a connection", logger.errorAttributes(os.ErrDeadlineExceeded)...)
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "SSH proxy session",
 		logger.sessionAttributes(testSession, nil, time.Unix(1700000000, 0), time.Unix(1700000001, 0))...)
 

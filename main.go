@@ -68,7 +68,7 @@ func main() {
 	sshmux, err := sshmuxServer(configFile)
 	if err != nil {
 		slog.LogAttrs(context.Background(), slog.LevelError, "sshmux could not start",
-			defaultAttributeNames.errorAttributes(err)...)
+			slogAttributes(defaultAttributeNames.errorAttributes(err))...)
 		os.Exit(1)
 	}
 	signals := make(chan os.Signal, 1)
@@ -76,7 +76,7 @@ func main() {
 	defer signal.Stop(signals)
 	if err := runUntilSignal(sshmux, signals); err != nil {
 		slog.LogAttrs(context.Background(), slog.LevelError, "sshmux could not start",
-			defaultAttributeNames.errorAttributes(err)...)
+			slogAttributes(defaultAttributeNames.errorAttributes(err))...)
 		os.Exit(1)
 	}
 }

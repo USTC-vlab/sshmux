@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -199,18 +198,12 @@ func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.Str
 // errorAttributes names an error the service carried on from: the class to act
 // on, what it said, and what it was. It says nothing of a session, having none
 // to say anything about.
-func (n attributeNames) errorAttributes(err error) []slog.Attr {
-	attrs := []slog.Attr{
-		slog.String(string(n.errorType), errorType(err)),
-		slog.String(string(n.exceptionMessage), err.Error()),
-	}
-	// The type behind the class, where the convention has a name for it. A
-	// record has no cardinality to protect, so it can carry the type itself
-	// rather than another of the closed classes above.
-	if n.exceptionType != "" {
-		attrs = append(attrs, slog.String(string(n.exceptionType), exceptionType(err)))
-	}
-	return attrs
+func (n attributeNames) errorAttributes(err error) []attribute.KeyValue {
+	return named([]attribute.KeyValue{
+		n.errorType.String(errorType(err)),
+		n.exceptionMessage.String(err.Error()),
+		n.exceptionType.String(exceptionType(err)),
+	})
 }
 
 // connectionAttributes reports the parts of a connection's identity that are
@@ -260,8 +253,13 @@ func (n attributeNames) authMethodAttributes(info connectionInfo) []attribute.Ke
 }
 
 // named drops the attributes the convention has no name for, which it resolves
-// to an empty key. Every builder here returns through it, so that a sink takes
-// what it is given.
+// to an empty key. Every builder returns through it, so that a sink takes what
+// it is given.
+//
+// It is also why an attribute is named through a builder rather than reached
+// for at the call site: a builder describes the whole of one thing, so it can
+// be given what this convention has no name for and leave it out, where a call
+// site naming a key itself would carry the empty one through.
 func named(attrs []attribute.KeyValue) []attribute.KeyValue {
 	return slices.DeleteFunc(attrs, func(attr attribute.KeyValue) bool { return attr.Key == "" })
 }
@@ -382,7 +380,7 @@ func (n attributeNames) serverAttributes(server *url.URL) []attribute.KeyValue {
 	if number, err := strconv.Atoi(port); err == nil {
 		attrs = append(attrs, n.serverPort.Int(number))
 	}
-	return attrs
+	return named(attrs)
 }
 
 func portForScheme(scheme string) string {
@@ -417,8 +415,8 @@ func (n attributeNames) peerAttributes(peer net.Addr) []attribute.KeyValue {
 	if !ok {
 		return nil
 	}
-	return []attribute.KeyValue{
+	return named([]attribute.KeyValue{
 		n.networkPeerAddress.String(tcp.IP.String()),
 		n.networkPeerPort.Int(tcp.Port),
-	}
+	})
 }
