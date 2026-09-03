@@ -311,11 +311,13 @@ func slogAttribute(attr attribute.KeyValue) slog.Attr {
 	}
 }
 
-// The classes of event a record is one of. The conventions define both for a
-// session, and require the session's own identifier alongside either.
+// The classes of event a record is one of. The conventions define both of the
+// session's, and have nothing for a service's lifecycle, so those are sshmux's.
 const (
 	sessionStartEventName = "session.start"
 	sessionEndEventName   = "session.end"
+	serverStartEventName  = "sshmux.server.start"
+	serverStopEventName   = "sshmux.server.stop"
 )
 
 // sessionStartAttributes names a session that has begun, which is as much of
@@ -333,6 +335,38 @@ func (l *Logger) sessionStartAttributes(info connectionInfo, start time.Time) []
 	attrs = append(attrs, l.connectionAttributes(info)...)
 	return namedRecord(append(attrs, slogAttributes(socketAttributes(info.ClientPeer,
 		names.sshmuxDownstreamAddress, names.sshmuxDownstreamPort))...))
+}
+
+// serverStartAttributes names the server that has begun listening, at the
+// address it was reached at rather than the one it was asked for, which may
+// name no port at all. sshmux is the server of this one, where it is the client
+// of the backend a session names the same way. The duration is what starting
+// took, being what the event names.
+func (l *Logger) serverStartAttributes(address net.Addr, starting time.Duration) []slog.Attr {
+	names := l.attrs
+	attrs := []slog.Attr{
+		slog.String(string(names.eventName), serverStartEventName),
+		slog.Any(string(names.eventCategory), []string{"process"}),
+		slog.Any(string(names.eventType), []string{"start"}),
+		slog.Int64(string(names.eventDuration), starting.Nanoseconds()),
+	}
+	return namedRecord(append(attrs, slogAttributes(socketAttributes(address,
+		names.serverAddress, names.serverPort))...))
+}
+
+// serverStopAttributes names the server that has stopped listening, at the
+// address it was reached at while it was. The duration is what stopping took,
+// which is mostly how long the last sessions took to drain.
+func (l *Logger) serverStopAttributes(address net.Addr, stopping time.Duration) []slog.Attr {
+	names := l.attrs
+	attrs := []slog.Attr{
+		slog.String(string(names.eventName), serverStopEventName),
+		slog.Any(string(names.eventCategory), []string{"process"}),
+		slog.Any(string(names.eventType), []string{"end"}),
+		slog.Int64(string(names.eventDuration), stopping.Nanoseconds()),
+	}
+	return namedRecord(append(attrs, slogAttributes(socketAttributes(address,
+		names.serverAddress, names.serverPort))...))
 }
 
 // eventNameProcessor moves the class of event a record is into the field the

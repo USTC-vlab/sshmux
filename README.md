@@ -270,7 +270,7 @@ They differ in the following attributes:
 
 ## Logs
 
-`sshmux` writes two records per session, through the sinks configured in the [Logger Settings](#logger-settings). Both sinks can be enabled at once, so an OTLP collector can be introduced alongside an existing UDP one.
+`sshmux` writes two records per session, and one when it starts and stops, through the sinks configured in the [Logger Settings](#logger-settings). Both sinks can be enabled at once, so an OTLP collector can be introduced alongside an existing UDP one.
 
 Each record is one of the two [session events](https://opentelemetry.io/docs/specs/semconv/general/session/) the semantic conventions define, and carries the `session.id` they require, which is the SSH session identifier the auth API is told as `session_id`. Over OTLP and in an `otel` document the class is the record's own event name, rather than the attribute each convention [names it in](#attribute-conventions).
 
@@ -299,6 +299,8 @@ $ socat UDP-LISTEN:5556 STDOUT
 ```
 
 A connection that fails before the transport is up is counted by `sshmux.connections` without either record being written for it. A handshake that fails afterwards still ends its session, and is recorded with the fields known at that point.
+
+`sshmux` reports itself starting and stopping as the `sshmux.server.start` and `sshmux.server.stop` events, the semantic conventions having nothing for a service's own lifecycle. Both name the `server.address` and `server.port` it was reached at, `sshmux` being the server of the address it listens on as the backend is of the one a session names. Both are categorized as ECS categorizes a process, `event.category` being `process` and `event.type` `start` or `end`, and both name `event.duration`: starting covers the listeners coming up, and stopping the last session draining and those listeners going down again.
 
 The errors `sshmux` carries on from go to the sinks as well: a connection it could not accept, a Prometheus endpoint that stopped serving, an exporter that would not shut down. Each is a record at `ERROR` naming one of the [error classes](#error-classes) as `error.type`, with what the error said and what it was beside it, and none of them says anything of a session. Every record is offered to standard error as well as to the sinks, whether one is configured or not: an operator watching the service should not have to run a collector to see it fail. What separates them is the level, the terminal taking `WARN` and above — so these errors reach it and a session that ran to its end does not.
 
