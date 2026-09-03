@@ -52,6 +52,15 @@ type connectionInfo struct {
 	// SessionID identifies the SSH session, which is what the auth API is told
 	// as `session_id`. It is set once the SSH transport is up.
 	SessionID string
+	// DownstreamAuthMethods are the methods the client authenticated to sshmux
+	// by, and UpstreamAuthMethods those sshmux authenticated to the backend by.
+	// Both keep what was accepted and only that, in whole or in part: a method
+	// that gets a step of the way, as a key does where challenges follow it,
+	// counts as much as one that completes the exchange. A method that was
+	// refused is left out, so that a record says how a session got in rather
+	// than everything it knocked with.
+	DownstreamAuthMethods []string
+	UpstreamAuthMethods   []string
 	// HandshakeStart and HandshakeEnd are when the downstream handshake and the
 	// upstream dial began and concluded, which is the session's own span within
 	// the connection carrying it. Both are zero until the SSH transport is up.
@@ -207,4 +216,23 @@ func valueOrDefault(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// appendDownstreamAuthMethod keeps a method the auth API accepted. One it
+// refused is left to the span of the request that refused it, and several
+// rounds of one method, as keyboard-interactive takes, are the one method.
+func (info *connectionInfo) appendDownstreamAuthMethod(method string) {
+	if n := len(info.DownstreamAuthMethods); n > 0 && info.DownstreamAuthMethods[n-1] == method {
+		return
+	}
+	info.DownstreamAuthMethods = append(info.DownstreamAuthMethods, method)
+}
+
+// appendUpstreamAuthMethod keeps a method the backend accepted, as the
+// downstream side keeps what the auth API accepted.
+func (info *connectionInfo) appendUpstreamAuthMethod(method string) {
+	if n := len(info.UpstreamAuthMethods); n > 0 && info.UpstreamAuthMethods[n-1] == method {
+		return
+	}
+	info.UpstreamAuthMethods = append(info.UpstreamAuthMethods, method)
 }

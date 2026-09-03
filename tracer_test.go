@@ -193,6 +193,36 @@ func TestTracerPropagation(t *testing.T) {
 	}
 }
 
+// TestAuthMethodSpanAttributes covers the handshake span naming what each side
+// of the session authenticated by, that being what the span itself covers.
+func TestAuthMethodSpanAttributes(t *testing.T) {
+	tracer, err := makeTracer(TracerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := tracer.authMethodSpanAttributes(connectionInfo{
+		DownstreamAuthMethods: []string{"publickey", "keyboard-interactive"},
+		UpstreamAuthMethods:   []string{"publickey"},
+	})
+	want := map[attribute.Key][]string{
+		"sshmux.downstream.auth.methods": {"publickey", "keyboard-interactive"},
+		"sshmux.upstream.auth.methods":   {"publickey"},
+	}
+	if len(attrs) != len(want) {
+		t.Fatalf("%d attributes, want %d", len(attrs), len(want))
+	}
+	for _, attr := range attrs {
+		if !slices.Equal(attr.Value.AsStringSlice(), want[attr.Key]) {
+			t.Errorf("%s = %v, want %v", attr.Key, attr.Value.AsStringSlice(), want[attr.Key])
+		}
+	}
+
+	// A session that authenticated on neither side names neither.
+	if attrs := tracer.authMethodSpanAttributes(connectionInfo{}); len(attrs) != 0 {
+		t.Errorf("attrs = %v, want nothing where nothing authenticated", attrs)
+	}
+}
+
 // TestSpanAttributesDropUnnamed covers the rule that a convention with no name
 // for an attribute leaves its key empty, and that nothing with an empty key
 // reaches a span.

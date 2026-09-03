@@ -467,16 +467,18 @@ func TestServerLoggerWiring(t *testing.T) {
 
 // testSession is the connection the record assertions are built from.
 var testSession = connectionInfo{
-	Username:        "vlab",
-	UpstreamHost:    "10.0.0.7",
-	UpstreamPort:    22,
-	SessionID:       "c3NobXV4LXRlc3Qtc2Vzc2lvbg==",
-	UpstreamPeer:    &net.TCPAddr{IP: net.IPv4(192, 0, 2, 200), Port: 2222},
-	ClientHost:      "192.0.2.10",
-	ClientPort:      54321,
-	ClientPeer:      &net.TCPAddr{IP: net.IPv4(198, 51, 100, 7), Port: 40000},
-	ProtocolVersion: "2.0",
-	Established:     true,
+	Username:              "vlab",
+	UpstreamHost:          "10.0.0.7",
+	UpstreamPort:          22,
+	SessionID:             "c3NobXV4LXRlc3Qtc2Vzc2lvbg==",
+	DownstreamAuthMethods: []string{"publickey", "keyboard-interactive"},
+	UpstreamAuthMethods:   []string{"publickey"},
+	UpstreamPeer:          &net.TCPAddr{IP: net.IPv4(192, 0, 2, 200), Port: 2222},
+	ClientHost:            "192.0.2.10",
+	ClientPort:            54321,
+	ClientPeer:            &net.TCPAddr{IP: net.IPv4(198, 51, 100, 7), Port: 40000},
+	ProtocolVersion:       "2.0",
+	Established:           true,
 }
 
 // loggerWithShape returns a logger writing JSON documents of the given shape,
@@ -622,8 +624,6 @@ func TestLogRecordLegacyShape(t *testing.T) {
 	}
 }
 
-// TestLogRecordUnestablished checks the record a connection that never
-// authenticated produces: an outcome, but no user or server.
 // TestLogRecordErrorType covers a session that never started, which the record
 // classifies the same way the metrics classify it.
 func TestLogRecordErrorType(t *testing.T) {
@@ -791,6 +791,44 @@ func TestServiceErrorsReachTheConsole(t *testing.T) {
 	}
 }
 
+// TestLogRecordAuthenticated covers what authenticated each side of a session,
+// which one exchange cannot say: a key accepted before challenges is one method
+// and the challenges another, and sshmux authenticates to the backend besides.
+func TestLogRecordAuthenticated(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	logTestSession(t, logger)
+
+	record := awaitRecord(t, records)
+	downstream, _ := record["sshmux.downstream.auth.methods"].([]any)
+	if len(downstream) != 2 || downstream[0] != "publickey" || downstream[1] != "keyboard-interactive" {
+		t.Errorf("downstream = %v, want both, in the order they authenticated", record["sshmux.downstream.auth.methods"])
+	}
+	upstream, _ := record["sshmux.upstream.auth.methods"].([]any)
+	if len(upstream) != 1 || upstream[0] != "publickey" {
+		t.Errorf("upstream = %v, want the key sshmux was given", record["sshmux.upstream.auth.methods"])
+	}
+	// What each was answered with belongs to the request that answered it.
+	if value, ok := record["sshmux.auth.status"]; ok {
+		t.Errorf("sshmux.auth.status = %v, want it left to the request it answered", value)
+	}
+}
+
+// TestLogRecordAuthenticatedByNothing covers a session that authenticated on
+// neither side, which names no method rather than naming what it tried.
+func TestLogRecordAuthenticatedByNothing(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	connect := time.Unix(1700000000, 0)
+	logFailedSessionRecord(logger, connectionInfo{ClientHost: "192.0.2.10", ClientPort: 54321},
+		io.EOF, connect, connect.Add(testSessionLength))
+
+	record := awaitRecord(t, records)
+	for _, key := range []string{"sshmux.downstream.auth.methods", "sshmux.upstream.auth.methods"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want nothing where nothing authenticated", key, value)
+		}
+	}
+}
+
 // TestLegacyShapeIgnoresTheSockets checks that the addresses sshmux is really
 // connected to and from reach the schema's sinks without reaching this one,
 // whose fields are fixed.
@@ -816,6 +854,8 @@ func TestLegacyShapeIgnoresTheSockets(t *testing.T) {
 	}
 }
 
+// TestLogRecordUnestablished checks the record a connection that never
+// authenticated produces: an outcome, but no user or server.
 func TestLogRecordUnestablished(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
 	connect := time.Unix(1700000000, 0)
@@ -836,7 +876,7 @@ func TestLogRecordUnestablished(t *testing.T) {
 	}
 }
 
-// TestLogRecordLegacyUnestablished checks the legacy record of a connection
+// TestLegacyShapeUnestablished checks the legacy record of a connection
 // that never started, which the old code never wrote at all.
 func TestLegacyShapeUnestablished(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeLegacy)
@@ -855,8 +895,10 @@ func TestLegacyShapeUnestablished(t *testing.T) {
 	}
 }
 
-// TestLoggerSinkConventions checks that each sink resolves its own convention,
-// falling back to the group's where it names none.
+// TestLegacyShapeIsFrozen checks that the shape takes no field it was not
+// defined with: an attribute it has no name for is left out rather than
+// carried through, and a record that is not a session is given none of a
+// session's fields.
 func TestLegacyShapeIsFrozen(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeLegacy)
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "listening",

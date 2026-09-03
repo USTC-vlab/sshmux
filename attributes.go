@@ -78,6 +78,15 @@ type attributeNames struct {
 
 	sshmuxAuthMethod attribute.Key
 	sshmuxAuthStatus attribute.Key
+	// The methods a whole session was authenticated by, in the order they were
+	// tried. One request is named by the singular above; a session is a
+	// sequence of them, and no one of them is its authentication.
+	sshmuxDownstreamAuthMethods attribute.Key
+	// The methods sshmux authenticated to the backend by: the credential the
+	// auth API answered with, and then whatever the client sent through where
+	// that was refused. Every one is worth keeping, a refusal here being the
+	// interesting part rather than noise.
+	sshmuxUpstreamAuthMethods attribute.Key
 	// The moments the downstream handshake and the upstream dial began and
 	// concluded, which sshmux.handshake.duration measures between. The end of
 	// it, on a session that came up, is when it began being proxied.
@@ -97,35 +106,37 @@ type attributeNames struct {
 // semantic conventions first, then the Elastic Common Schema, then sshmux's
 // own namespace, and follows the conventions wherever they move.
 var defaultAttributeNames = attributeNames{
-	errorType:               attribute.Key("error.type"),               // semconv
-	exceptionType:           attribute.Key("exception.type"),           // semconv
-	exceptionMessage:        attribute.Key("exception.message"),        // semconv
-	userName:                attribute.Key("user.name"),                // semconv
-	clientAddress:           attribute.Key("client.address"),           // semconv
-	clientPort:              attribute.Key("client.port"),              // semconv
-	serverAddress:           attribute.Key("server.address"),           // semconv
-	serverPort:              attribute.Key("server.port"),              // semconv
-	networkProtocolName:     attribute.Key("network.protocol.name"),    // semconv
-	networkProtocolVersion:  attribute.Key("network.protocol.version"), // semconv
-	networkPeerAddress:      attribute.Key("network.peer.address"),     // semconv
-	networkPeerPort:         attribute.Key("network.peer.port"),        // semconv
-	eventName:               attribute.Key("otel.event.name"),          // semconv
-	sessionID:               attribute.Key("session.id"),               // semconv
-	eventOutcome:            attribute.Key("event.outcome"),            // ECS; semconv has no equivalent
-	eventKind:               attribute.Key("event.kind"),               // ECS; semconv has no equivalent
-	eventCategory:           attribute.Key("event.category"),           // ECS; semconv has no equivalent
-	eventType:               attribute.Key("event.type"),               // ECS; semconv has no equivalent
-	eventStart:              attribute.Key("event.start"),              // ECS; semconv has no equivalent
-	eventEnd:                attribute.Key("event.end"),                // ECS; semconv has no equivalent
-	eventDuration:           attribute.Key("event.duration"),           // ECS; semconv has no equivalent
-	sshmuxAuthMethod:        attribute.Key("sshmux.auth.method"),
-	sshmuxAuthStatus:        attribute.Key("sshmux.auth.status"),
-	sshmuxHandshakeStart:    attribute.Key("sshmux.handshake.start"),
-	sshmuxHandshakeEnd:      attribute.Key("sshmux.handshake.end"),
-	sshmuxDownstreamAddress: attribute.Key("sshmux.downstream.address"),
-	sshmuxDownstreamPort:    attribute.Key("sshmux.downstream.port"),
-	sshmuxUpstreamAddress:   attribute.Key("sshmux.upstream.address"),
-	sshmuxUpstreamPort:      attribute.Key("sshmux.upstream.port"),
+	errorType:                   attribute.Key("error.type"),               // semconv
+	exceptionType:               attribute.Key("exception.type"),           // semconv
+	exceptionMessage:            attribute.Key("exception.message"),        // semconv
+	userName:                    attribute.Key("user.name"),                // semconv
+	clientAddress:               attribute.Key("client.address"),           // semconv
+	clientPort:                  attribute.Key("client.port"),              // semconv
+	serverAddress:               attribute.Key("server.address"),           // semconv
+	serverPort:                  attribute.Key("server.port"),              // semconv
+	networkProtocolName:         attribute.Key("network.protocol.name"),    // semconv
+	networkProtocolVersion:      attribute.Key("network.protocol.version"), // semconv
+	networkPeerAddress:          attribute.Key("network.peer.address"),     // semconv
+	networkPeerPort:             attribute.Key("network.peer.port"),        // semconv
+	eventName:                   attribute.Key("otel.event.name"),          // semconv
+	sessionID:                   attribute.Key("session.id"),               // semconv
+	eventOutcome:                attribute.Key("event.outcome"),            // ECS; semconv has no equivalent
+	eventKind:                   attribute.Key("event.kind"),               // ECS; semconv has no equivalent
+	eventCategory:               attribute.Key("event.category"),           // ECS; semconv has no equivalent
+	eventType:                   attribute.Key("event.type"),               // ECS; semconv has no equivalent
+	eventStart:                  attribute.Key("event.start"),              // ECS; semconv has no equivalent
+	eventEnd:                    attribute.Key("event.end"),                // ECS; semconv has no equivalent
+	eventDuration:               attribute.Key("event.duration"),           // ECS; semconv has no equivalent
+	sshmuxAuthMethod:            attribute.Key("sshmux.auth.method"),
+	sshmuxAuthStatus:            attribute.Key("sshmux.auth.status"),
+	sshmuxDownstreamAuthMethods: attribute.Key("sshmux.downstream.auth.methods"),
+	sshmuxUpstreamAuthMethods:   attribute.Key("sshmux.upstream.auth.methods"),
+	sshmuxHandshakeStart:        attribute.Key("sshmux.handshake.start"),
+	sshmuxHandshakeEnd:          attribute.Key("sshmux.handshake.end"),
+	sshmuxDownstreamAddress:     attribute.Key("sshmux.downstream.address"),
+	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
+	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
+	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
 }
 
 // ecsAttributeNames resolves against the Elastic Common Schema only, which does
@@ -145,26 +156,28 @@ var ecsAttributeNames = attributeNames{
 	// ECS names the application protocol without the namespace the semantic
 	// conventions put it in, and has nothing for its version. An empty key
 	// drops the attribute.
-	networkProtocolName:     attribute.Key("network.protocol"),
-	networkPeerAddress:      attribute.Key("network.peer.address"),
-	networkPeerPort:         attribute.Key("network.peer.port"),
-	eventName:               attribute.Key("event.action"),
-	sessionID:               attribute.Key("session.id"),
-	eventOutcome:            attribute.Key("event.outcome"),
-	eventKind:               attribute.Key("event.kind"),
-	eventCategory:           attribute.Key("event.category"),
-	eventType:               attribute.Key("event.type"),
-	eventStart:              attribute.Key("event.start"),
-	eventEnd:                attribute.Key("event.end"),
-	eventDuration:           attribute.Key("event.duration"),
-	sshmuxAuthMethod:        attribute.Key("sshmux.auth.method"),
-	sshmuxAuthStatus:        attribute.Key("sshmux.auth.status"),
-	sshmuxHandshakeStart:    attribute.Key("sshmux.handshake.start"),
-	sshmuxHandshakeEnd:      attribute.Key("sshmux.handshake.end"),
-	sshmuxDownstreamAddress: attribute.Key("sshmux.downstream.address"),
-	sshmuxDownstreamPort:    attribute.Key("sshmux.downstream.port"),
-	sshmuxUpstreamAddress:   attribute.Key("sshmux.upstream.address"),
-	sshmuxUpstreamPort:      attribute.Key("sshmux.upstream.port"),
+	networkProtocolName:         attribute.Key("network.protocol"),
+	networkPeerAddress:          attribute.Key("network.peer.address"),
+	networkPeerPort:             attribute.Key("network.peer.port"),
+	eventName:                   attribute.Key("event.action"),
+	sessionID:                   attribute.Key("session.id"),
+	eventOutcome:                attribute.Key("event.outcome"),
+	eventKind:                   attribute.Key("event.kind"),
+	eventCategory:               attribute.Key("event.category"),
+	eventType:                   attribute.Key("event.type"),
+	eventStart:                  attribute.Key("event.start"),
+	eventEnd:                    attribute.Key("event.end"),
+	eventDuration:               attribute.Key("event.duration"),
+	sshmuxAuthMethod:            attribute.Key("sshmux.auth.method"),
+	sshmuxAuthStatus:            attribute.Key("sshmux.auth.status"),
+	sshmuxDownstreamAuthMethods: attribute.Key("sshmux.downstream.auth.methods"),
+	sshmuxUpstreamAuthMethods:   attribute.Key("sshmux.upstream.auth.methods"),
+	sshmuxHandshakeStart:        attribute.Key("sshmux.handshake.start"),
+	sshmuxHandshakeEnd:          attribute.Key("sshmux.handshake.end"),
+	sshmuxDownstreamAddress:     attribute.Key("sshmux.downstream.address"),
+	sshmuxDownstreamPort:        attribute.Key("sshmux.downstream.port"),
+	sshmuxUpstreamAddress:       attribute.Key("sshmux.upstream.address"),
+	sshmuxUpstreamPort:          attribute.Key("sshmux.upstream.port"),
 }
 
 // conventionAttributeNames resolves the configured convention.
@@ -229,6 +242,19 @@ func (n attributeNames) connectionAttributes(info connectionInfo) []attribute.Ke
 		attrs = append(attrs,
 			n.serverAddress.String(info.UpstreamHost),
 			n.serverPort.Int(int(info.UpstreamPort)))
+	}
+	return named(attrs)
+}
+
+// authMethodAttributes names the methods each side of a session authenticated
+// by, which is not what any one exchange can say.
+func (n attributeNames) authMethodAttributes(info connectionInfo) []attribute.KeyValue {
+	var attrs []attribute.KeyValue
+	if len(info.DownstreamAuthMethods) > 0 {
+		attrs = append(attrs, n.sshmuxDownstreamAuthMethods.StringSlice(info.DownstreamAuthMethods))
+	}
+	if len(info.UpstreamAuthMethods) > 0 {
+		attrs = append(attrs, n.sshmuxUpstreamAuthMethods.StringSlice(info.UpstreamAuthMethods))
 	}
 	return named(attrs)
 }
