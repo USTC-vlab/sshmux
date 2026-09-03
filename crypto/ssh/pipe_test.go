@@ -58,7 +58,7 @@ func TestPipeRejectsUpdateHostKeysRequestsInBothDirections(t *testing.T) {
 					})}}
 					dst := &scriptedPacketConn{}
 
-					if err := pipe(dst, src, direction.handlePing); err != io.EOF {
+					if _, err := pipe(dst, src, direction.handlePing); err != io.EOF {
 						t.Fatalf("pipe returned %v, want EOF", err)
 					}
 					if len(dst.writes) != 0 {
@@ -86,7 +86,7 @@ func TestPipeForwardsOtherGlobalRequests(t *testing.T) {
 	src := &scriptedPacketConn{reads: [][]byte{want}}
 	dst := &scriptedPacketConn{}
 
-	if err := pipe(dst, src, false); err != io.EOF {
+	if _, err := pipe(dst, src, false); err != io.EOF {
 		t.Fatalf("pipe returned %v, want EOF", err)
 	}
 	if len(dst.writes) != 1 || string(dst.writes[0]) != string(want) {

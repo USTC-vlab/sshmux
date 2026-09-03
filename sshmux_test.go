@@ -34,6 +34,7 @@ import (
 // is known before the service is bound: every port is picked by the kernel, so
 // that concurrent packages and back-to-back runs cannot collide.
 var (
+	testEnvMu sync.RWMutex
 	// the auth API sshmux asks about every connection
 	apiServerAddr *net.TCPAddr
 	// sshmux itself, restarted for each configuration under test
@@ -92,6 +93,27 @@ var enablePartialAuth bool
 var upstreamUsername string
 var inited bool
 
+func cloneTCPAddr(addr *net.TCPAddr) *net.TCPAddr {
+	clone := *addr
+	clone.IP = slices.Clone(addr.IP)
+	return &clone
+}
+
+func authAPIState() (sshd, proxied *net.TCPAddr, proxy, partial bool, username string) {
+	testEnvMu.RLock()
+	defer testEnvMu.RUnlock()
+	return cloneTCPAddr(sshdServerAddr), cloneTCPAddr(sshdProxiedAddr),
+		enableProxy, enablePartialAuth, upstreamUsername
+}
+
+func setAuthAPIOptions(proxy, partial bool, username string) {
+	testEnvMu.Lock()
+	defer testEnvMu.Unlock()
+	enableProxy = proxy
+	enablePartialAuth = partial
+	upstreamUsername = username
+}
+
 // partialAuthToken is the answer expected by the auth API when partial auth is
 // enabled, before it hands out any upstream information.
 const partialAuthToken = "testtoken"
@@ -120,6 +142,7 @@ func checkClientInfo(request AuthRequest) string {
 // serveAPI answers auth requests on listener until it fails.
 func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 	sshAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		sshdAddr, proxiedAddr, proxy, _, _ := authAPIState()
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Cannot read body", http.StatusBadRequest)
@@ -136,11 +159,11 @@ func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 			"vmid":        1141919,
 			"private_key": string(sshPrivateKey),
 		}
-		if enableProxy {
-			res["address"] = sshdProxiedAddr.String()
+		if proxy {
+			res["address"] = proxiedAddr.String()
 			res["proxy_protocol"] = 2
 		} else {
-			res["address"] = sshdServerAddr.String()
+			res["address"] = sshdAddr.String()
 		}
 
 		jsonRes, err := json.Marshal(res)
@@ -153,6 +176,7 @@ func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 	}
 
 	authAPIHandler := func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		sshdAddr, proxiedAddr, proxy, partial, username := authAPIState()
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Cannot read body", http.StatusBadRequest)
@@ -179,7 +203,7 @@ func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 			return
 		}
 
-		if enablePartialAuth {
+		if partial {
 			deny := func(message string) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
@@ -226,18 +250,18 @@ func serveAPI(listener net.Listener, sshPrivateKey []byte) {
 
 		res := map[string]any{
 			"upstream": map[string]any{
-				"host":        sshdServerAddr.IP.String(),
-				"port":        sshdServerAddr.Port,
+				"host":        sshdAddr.IP.String(),
+				"port":        sshdAddr.Port,
 				"private_key": string(sshPrivateKey),
 			},
 		}
-		if upstreamUsername != "" {
-			res["upstream"].(map[string]any)["username"] = upstreamUsername
+		if username != "" {
+			res["upstream"].(map[string]any)["username"] = username
 		}
-		if enableProxy {
+		if proxy {
 			res["proxy"] = map[string]any{
-				"host": sshdProxiedAddr.IP.String(),
-				"port": sshdProxiedAddr.Port,
+				"host": proxiedAddr.IP.String(),
+				"port": proxiedAddr.Port,
 			}
 		}
 
@@ -274,7 +298,10 @@ func serveUpstreamProxy(listener net.Listener) {
 
 		go func() {
 			// 1. Set up downstream connection with sshmux
-			sshmux, err := net.DialTCP("tcp", localAddr, sshmuxServerAddr)
+			testEnvMu.RLock()
+			serverAddr := cloneTCPAddr(sshmuxServerAddr)
+			testEnvMu.RUnlock()
+			sshmux, err := net.DialTCP("tcp", localAddr, serverAddr)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -317,7 +344,10 @@ func serveDownstreamProxy(listener net.Listener) {
 
 		go func() {
 			// 1. Set up downstream connection with sshd
-			sshd, err := net.DialTCP("tcp", nil, sshdServerAddr)
+			testEnvMu.RLock()
+			serverAddr := cloneTCPAddr(sshdServerAddr)
+			testEnvMu.RUnlock()
+			sshd, err := net.DialTCP("tcp", nil, serverAddr)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -363,7 +393,9 @@ func startServer(t *testing.T, configFile string, adjust ...func(*Config)) *Serv
 	if err := sshmux.Start(); err != nil {
 		t.Fatal(err)
 	}
-	sshmuxServerAddr = sshmux.Addr().(*net.TCPAddr)
+	testEnvMu.Lock()
+	sshmuxServerAddr = cloneTCPAddr(sshmux.Addr().(*net.TCPAddr))
+	testEnvMu.Unlock()
 	return sshmux
 }
 
@@ -421,7 +453,10 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 	// sshd binds the port itself, so hold one only long enough to learn a
 	// number nothing else on the machine is using.
 	listener := listenLocalhost(t)
-	sshdServerAddr = listener.Addr().(*net.TCPAddr)
+	serverAddr := cloneTCPAddr(listener.Addr().(*net.TCPAddr))
+	testEnvMu.Lock()
+	sshdServerAddr = cloneTCPAddr(serverAddr)
+	testEnvMu.Unlock()
 	if err := listener.Close(); err != nil {
 		t.Fatal("release sshd port: ", err)
 	}
@@ -429,7 +464,7 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 	cmd := exec.Command(
 		sshdPath, "-D", "-e",
 		"-h", filepath.Join(cwd, "fixtures/ssh_host_ed25519_key"),
-		"-p", fmt.Sprint(sshdServerAddr.Port),
+		"-p", fmt.Sprint(serverAddr.Port),
 		"-o", "AuthorizedKeysFile="+filepath.Join(cwd, "fixtures/ssh_id_rsa.pub"),
 		"-o", "StrictModes=no")
 	// Bind sshd to stderr, to quickly check if it goes wrong
@@ -440,7 +475,7 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		conn, err := net.DialTimeout("tcp", sshdServerAddr.String(), 50*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", serverAddr.String(), 50*time.Millisecond)
 		if err == nil {
 			conn.Close()
 			break
@@ -448,7 +483,7 @@ func onetimeSSHDServer(t *testing.T) *exec.Cmd {
 		if cmd.ProcessState != nil || time.Now().After(deadline) {
 			cmd.Process.Kill()
 			cmd.Wait()
-			t.Fatalf("sshd did not become ready on %s: %v", sshdServerAddr, err)
+			t.Fatalf("sshd did not become ready on %s: %v", serverAddr, err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -499,8 +534,8 @@ func TestSSHUpstreamUsername(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get current user: %v", err)
 	}
-	upstreamUsername = currentUser.Username
-	defer func() { upstreamUsername = "" }()
+	setAuthAPIOptions(false, false, currentUser.Username)
+	defer setAuthAPIOptions(false, false, "")
 
 	sshmux := startServer(t, "config.toml")
 	defer sshmux.Shutdown()
@@ -514,7 +549,7 @@ func TestSSHUpstreamUsername(t *testing.T) {
 // environment can be told apart from a broken sshmux.
 func sanityCheckSSHD(t *testing.T) {
 	t.Helper()
-	enableProxy = false
+	setAuthAPIOptions(false, false, "")
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
 	runSSHClient(t, sshdServerAddr)
@@ -522,7 +557,7 @@ func sanityCheckSSHD(t *testing.T) {
 
 func testWithSSHClient(t *testing.T, address *net.TCPAddr, proxy bool) {
 	t.Helper()
-	enableProxy = proxy
+	setAuthAPIOptions(proxy, false, "")
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
 	runSSHClient(t, address)
@@ -545,7 +580,7 @@ func testWithGolangSSHChallengeClient(t *testing.T, address *net.TCPAddr, proxy 
 		return answers, nil
 	}
 
-	enableProxy = proxy
+	setAuthAPIOptions(proxy, false, "")
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
 
@@ -597,9 +632,8 @@ func testWithGolangSSHPartialAuthClient(t *testing.T, address *net.TCPAddr, prox
 		return answers, nil
 	}
 
-	enableProxy = proxy
-	enablePartialAuth = true
-	defer func() { enablePartialAuth = false }()
+	setAuthAPIOptions(proxy, true, "")
+	defer setAuthAPIOptions(false, false, "")
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
 
@@ -890,7 +924,7 @@ func flushSpans(t *testing.T, sshmux *Server) {
 // apart from what only arrives once the session closes.
 func testWithHeldSSHClient(t *testing.T, address *net.TCPAddr, check func()) {
 	t.Helper()
-	enableProxy = false
+	setAuthAPIOptions(false, false, "")
 	cmd := onetimeSSHDServer(t)
 	defer stopSSHD(t, cmd)
 
