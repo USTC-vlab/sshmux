@@ -1,9 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,7 +26,7 @@ func loadConfig(configFile string) (Config, error) {
 		}
 		return config, nil
 	}
-	log.Println("warning: The `config.json` API is deprecated. Please use `config.toml` instead.")
+	slog.Warn("the `config.json` API is deprecated, use `config.toml` instead")
 	var legacyConfig LegacyConfig
 	err = json.Unmarshal(configFileBytes, &legacyConfig)
 	if err != nil {
@@ -57,17 +58,25 @@ func runUntilSignal(server serverLifecycle, signals <-chan os.Signal) error {
 }
 
 func main() {
+	// What sshmux says about itself before it has a logger, and after it has
+	// torn one down, reaches the terminal the same shape as what the logger
+	// writes there.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	var configFile string
 	flag.StringVar(&configFile, "c", "/etc/sshmux/config.toml", "config file")
 	flag.Parse()
 	sshmux, err := sshmuxServer(configFile)
 	if err != nil {
-		log.Fatal(err)
+		slog.LogAttrs(context.Background(), slog.LevelError, "sshmux could not start",
+			defaultAttributeNames.errorAttributes(err)...)
+		os.Exit(1)
 	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 	if err := runUntilSignal(sshmux, signals); err != nil {
-		log.Fatal(err)
+		slog.LogAttrs(context.Background(), slog.LevelError, "sshmux could not start",
+			defaultAttributeNames.errorAttributes(err)...)
+		os.Exit(1)
 	}
 }

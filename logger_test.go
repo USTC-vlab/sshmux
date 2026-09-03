@@ -394,6 +394,35 @@ func TestServerLogsNothingBeforeHandshake(t *testing.T) {
 	}
 }
 
+// TestLogRecordServiceError covers what the service says about itself: an error
+// it carried on from, named by the class the metrics classify one by and the
+// text ECS names, at a level that says it is not a session.
+func TestLogRecordServiceError(t *testing.T) {
+	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
+	logger.LogAttrs(context.Background(), slog.LevelError,
+		"sshmux could not accept a connection", logger.attrs.errorAttributes(os.ErrDeadlineExceeded)...)
+
+	record := awaitRecord(t, records)
+	if record["message"] != "sshmux could not accept a connection" {
+		t.Errorf("message = %v", record["message"])
+	}
+	if record["log.level"] != "ERROR" {
+		t.Errorf("log.level = %v, want an error", record["log.level"])
+	}
+	if record["error.type"] != "timeout" {
+		t.Errorf("error.type = %v, want the class the metrics use", record["error.type"])
+	}
+	if record["exception.message"] != os.ErrDeadlineExceeded.Error() {
+		t.Errorf("exception.message = %v", record["exception.message"])
+	}
+	// It is not a session, so it says nothing of one.
+	for _, key := range []string{"otel.event.name", "session.id", "event.outcome"} {
+		if value, ok := record[key]; ok {
+			t.Errorf("%s = %v, want nothing of a session", key, value)
+		}
+	}
+}
+
 // TestServerLoggerWiring drives a connection past the SSH transport and checks
 // the session record reaches the sink.
 func TestServerLoggerWiring(t *testing.T) {
@@ -732,6 +761,33 @@ func TestLegacyShapeWritesOnlyTheSessionEnd(t *testing.T) {
 		if value, ok := record[key]; ok {
 			t.Errorf("%s = %v, want no session document for an event that is not one", key, value)
 		}
+	}
+}
+
+// TestServiceErrorsReachTheConsole covers the console keeping what the service
+// has to say about itself, whether a sink is configured or not, where a session
+// that ran to its end is left to the sinks by the level.
+func TestServiceErrorsReachTheConsole(t *testing.T) {
+	var console strings.Builder
+	logger, err := makeLoggerWithBase(LoggerConfig{},
+		slog.New(slog.NewTextHandler(&console, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.LogAttrs(context.Background(), slog.LevelError,
+		"sshmux could not accept a connection", logger.attrs.errorAttributes(os.ErrDeadlineExceeded)...)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "SSH proxy session",
+		logger.sessionAttributes(testSession, nil, time.Unix(1700000000, 0), time.Unix(1700000001, 0))...)
+
+	written := console.String()
+	if !strings.Contains(written, "sshmux could not accept a connection") {
+		t.Errorf("console = %q, want the error it carried on from", written)
+	}
+	if !strings.Contains(written, "error.type=timeout") {
+		t.Errorf("console = %q, want the class the metrics use", written)
+	}
+	if strings.Contains(written, "SSH proxy session") {
+		t.Errorf("console = %q, want a session left to the sinks", written)
 	}
 }
 

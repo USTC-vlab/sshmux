@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/url"
@@ -42,10 +41,19 @@ type Logger struct {
 	conn     net.Conn
 }
 
+// makeLogger builds the logger on its sinks alone.
 func makeLogger(config LoggerConfig) (*Logger, error) {
-	logger := &Logger{
-		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
-		attrs:  defaultAttributeNames,
+	return makeLoggerWithBase(config, nil)
+}
+
+// makeLoggerWithBase builds the logger on the one given, whose handler takes
+// every record the sinks take. What it makes of them is its own business: the
+// one sshmux says the rest of what it has to say through keeps to WARN and
+// above, so a session that ran to its end is left to the sinks.
+func makeLoggerWithBase(config LoggerConfig, base *slog.Logger) (*Logger, error) {
+	logger := &Logger{Logger: base, attrs: defaultAttributeNames}
+	if base == nil {
+		logger.Logger = slog.New(slog.DiscardHandler)
 	}
 	if !config.Enabled {
 		return logger, nil
@@ -70,6 +78,9 @@ func makeLogger(config LoggerConfig) (*Logger, error) {
 	}
 
 	var handlers []slog.Handler
+	if base != nil {
+		handlers = append(handlers, base.Handler())
+	}
 	if udpAddress != "" {
 		conn, err := net.Dial("udp", udpAddress)
 		if err != nil {
@@ -119,7 +130,7 @@ func loggerUDPAddress(config LoggerConfig) (string, bool, error) {
 		if config.UDP.Enabled || config.UDP.Address != "" {
 			return "", false, errors.New("only one of logger.endpoint and logger.udp can be set")
 		}
-		log.Println("warning: `logger.endpoint` is deprecated. Please use `logger.udp` instead.")
+		slog.Warn("`logger.endpoint` is deprecated, use `logger.udp` instead")
 		endpoint, err := url.Parse(config.Endpoint)
 		if err != nil {
 			return "", false, err
@@ -196,7 +207,8 @@ func makeOTLPLogExporter(config OTLPConfig) (sdklog.Exporter, error) {
 func (l *Logger) Shutdown(ctx context.Context) {
 	if l.provider != nil {
 		if err := l.provider.Shutdown(ctx); err != nil {
-			log.Printf("Error on logger shutdown: %s\n", err)
+			slog.LogAttrs(ctx, slog.LevelError, "sshmux could not shut the logger down",
+				defaultAttributeNames.errorAttributes(err)...)
 		}
 		l.provider = nil
 	}
@@ -226,8 +238,8 @@ func (l *Logger) sessionAttributes(info connectionInfo, err error, connect, disc
 		slog.Any(string(names.eventCategory), []string{"network"}),
 		slog.Any(string(names.eventType), []string{"connection", "end"}),
 	}
-	// The class of whatever ended it is the one the metrics record, so that a
-	// failure is called the same thing whichever signal reports it.
+	// Whatever ended it is classified the one way, so that a failure is called
+	// the same thing whichever signal reports it.
 	attrs = append(attrs, slogAttributes(names.sessionOutcomeAttributes(info.Established, err))...)
 	attrs = append(attrs,
 		// ECS dates are UTC, so the local zone must not leak into the record.

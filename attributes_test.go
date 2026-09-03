@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"reflect"
 	"slices"
+	"syscall"
 	"testing"
 )
 
@@ -31,8 +33,8 @@ func TestConventionAttributeNames(t *testing.T) {
 	}
 
 	// The conventions adopted most of these fields from ECS, so they name all
-	// but the class of event, the application protocol and its version
-	// identically. A further difference needs a row in the README table, and
+	// but what an error said and was, the class of event, the application
+	// protocol and its version identically. A further difference needs a row in the README table, and
 	// this is what says so.
 	var differing []string
 	defaults, ecs := reflect.ValueOf(defaultAttributeNames), reflect.ValueOf(ecsAttributeNames)
@@ -43,16 +45,53 @@ func TestConventionAttributeNames(t *testing.T) {
 			differing = append(differing, defaults.Type().Field(i).Name)
 		}
 	}
-	want := []string{"networkProtocolName", "networkProtocolVersion", "eventName"}
+	want := []string{"exceptionType", "exceptionMessage", "networkProtocolName", "networkProtocolVersion", "eventName"}
 	if !slices.Equal(differing, want) {
 		t.Errorf("the conventions differ in %v, want %v", differing, want)
 	}
 	if ecsAttributeNames.networkProtocolVersion != "" {
 		t.Error("ECS has no name for the protocol version, want the attribute dropped")
 	}
+	if ecsAttributeNames.exceptionType != "" {
+		t.Error("ECS has no name for an error's type, want the attribute dropped")
+	}
 
 	if _, err := conventionAttributeNames("nonsense"); err == nil {
 		t.Error("an unknown convention should be refused")
+	}
+}
+
+// TestExceptionType covers the type an error is named by, which is read past
+// what only wraps it: the pointer it is held through, and the wrappers
+// fmt.Errorf builds, which say nothing about what went wrong.
+func TestExceptionType(t *testing.T) {
+	listen := &net.OpError{Op: "listen", Err: syscall.EADDRINUSE}
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{listen, "net.OpError"},
+		{syscall.EADDRINUSE, "syscall.Errno"},
+		{fmt.Errorf("listen: %w", listen), "net.OpError"},
+		{fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", listen)), "net.OpError"},
+		// A wrapper around nothing is all there is to name.
+		{fmt.Errorf("nothing to wrap"), "errors.errorString"},
+	}
+	for _, tc := range cases {
+		if got := exceptionType(tc.err); got != tc.want {
+			t.Errorf("exceptionType(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+
+	// It reaches the record under the name the convention gives it.
+	var named string
+	for _, attr := range defaultAttributeNames.errorAttributes(listen) {
+		if attr.Key == string(defaultAttributeNames.exceptionType) {
+			named = attr.Value.String()
+		}
+	}
+	if named != "net.OpError" {
+		t.Errorf("exception.type = %q, want %q", named, "net.OpError")
 	}
 }
 
@@ -67,6 +106,20 @@ func TestErrorType(t *testing.T) {
 		{context.DeadlineExceeded, "timeout"},
 		{os.ErrDeadlineExceeded, "timeout"},
 		{net.ErrClosed, "closed"},
+		{syscall.ECONNRESET, "reset"},
+		{syscall.EPIPE, "reset"},
+		{syscall.ECONNREFUSED, "refused"},
+		{syscall.EHOSTUNREACH, "unreachable"},
+		{syscall.ENETUNREACH, "unreachable"},
+		{syscall.EADDRINUSE, "in_use"},
+		{syscall.EMFILE, "exhausted"},
+		{fs.ErrNotExist, "not_found"},
+		{fs.ErrPermission, "permission"},
+		{&net.DNSError{Err: "no such host", Name: "auth.invalid"}, "dns"},
+		// The classes are read through whatever wrapped them, which is how they
+		// arrive: a dial says what it was doing before it says what happened.
+		{&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, "refused"},
+		{fmt.Errorf("listen: %w", syscall.EADDRINUSE), "in_use"},
 		{fmt.Errorf("wrapped: %w", os.ErrDeadlineExceeded), "timeout"},
 		{errors.New("boom"), "other"},
 	}

@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
+	"syscall"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -31,7 +35,15 @@ const unknownAttributeValue = "unknown"
 // attributeNames is the set of attribute keys one convention resolves to.
 // Only the names differ between conventions; the values never do.
 type attributeNames struct {
-	errorType              attribute.Key
+	errorType attribute.Key
+	// What kind of error it was, and what it said. The semantic conventions
+	// name both on the exception they came from, where ECS names the message
+	// on the error and calls the two equivalent. ECS has no second name for the
+	// kind, its own error.type being the class above, so it drops this one
+	// rather than writing two things under one name.
+	exceptionType    attribute.Key
+	exceptionMessage attribute.Key
+
 	userName               attribute.Key
 	clientAddress          attribute.Key
 	clientPort             attribute.Key
@@ -86,6 +98,8 @@ type attributeNames struct {
 // own namespace, and follows the conventions wherever they move.
 var defaultAttributeNames = attributeNames{
 	errorType:               attribute.Key("error.type"),               // semconv
+	exceptionType:           attribute.Key("exception.type"),           // semconv
+	exceptionMessage:        attribute.Key("exception.message"),        // semconv
 	userName:                attribute.Key("user.name"),                // semconv
 	clientAddress:           attribute.Key("client.address"),           // semconv
 	clientPort:              attribute.Key("client.port"),              // semconv
@@ -121,15 +135,16 @@ var defaultAttributeNames = attributeNames{
 // having adopted the fields from ECS. The two tables are kept apart for the
 // ones that have since diverged, marked below, and for those that will.
 var ecsAttributeNames = attributeNames{
-	errorType:     attribute.Key("error.type"),
-	userName:      attribute.Key("user.name"),
-	clientAddress: attribute.Key("client.address"),
-	clientPort:    attribute.Key("client.port"),
-	serverAddress: attribute.Key("server.address"),
-	serverPort:    attribute.Key("server.port"),
-	// The two attributes the conventions do not share: ECS names the
-	// application protocol without the namespace the semantic conventions put
-	// it in, and has nothing for its version. An empty key drops the attribute.
+	errorType:        attribute.Key("error.type"),
+	exceptionMessage: attribute.Key("error.message"),
+	userName:         attribute.Key("user.name"),
+	clientAddress:    attribute.Key("client.address"),
+	clientPort:       attribute.Key("client.port"),
+	serverAddress:    attribute.Key("server.address"),
+	serverPort:       attribute.Key("server.port"),
+	// ECS names the application protocol without the namespace the semantic
+	// conventions put it in, and has nothing for its version. An empty key
+	// drops the attribute.
 	networkProtocolName:     attribute.Key("network.protocol"),
 	networkPeerAddress:      attribute.Key("network.peer.address"),
 	networkPeerPort:         attribute.Key("network.peer.port"),
@@ -167,6 +182,23 @@ func conventionAttributeNames(convention AttributeConvention) (attributeNames, e
 
 func (n attributeNames) success() attribute.KeyValue { return n.eventOutcome.String("success") }
 func (n attributeNames) failure() attribute.KeyValue { return n.eventOutcome.String("failure") }
+
+// errorAttributes names an error the service carried on from: the class to act
+// on, what it said, and what it was. It says nothing of a session, having none
+// to say anything about.
+func (n attributeNames) errorAttributes(err error) []slog.Attr {
+	attrs := []slog.Attr{
+		slog.String(string(n.errorType), errorType(err)),
+		slog.String(string(n.exceptionMessage), err.Error()),
+	}
+	// The type behind the class, where the convention has a name for it. A
+	// record has no cardinality to protect, so it can carry the type itself
+	// rather than another of the closed classes above.
+	if n.exceptionType != "" {
+		attrs = append(attrs, slog.String(string(n.exceptionType), exceptionType(err)))
+	}
+	return attrs
+}
 
 // connectionAttributes reports the parts of a connection's identity that are
 // known. Both the spans and the log records are built from it, so that one
@@ -234,6 +266,40 @@ func (n attributeNames) outcome(succeeded bool, err error) []attribute.KeyValue 
 	return named(attrs)
 }
 
+// fmtWrapErrorType is the type fmt.Errorf returns when it wraps with %w, which
+// says nothing about what went wrong.
+var fmtWrapErrorType = reflect.TypeOf(fmt.Errorf("wrapped: %w", errors.New("err")))
+
+// exceptionType names the type an error is, reading past what only wraps it:
+// the wrappers fmt.Errorf builds, which the semantic conventions allow where a
+// wrapper does not help classify the failure, and the pointer an error is
+// almost always held through, which names the type rather than describes it.
+// Only the type is read this way -- the message stays the one the error gave,
+// which is what the wrapping was for. A wrapper around nothing is all there is
+// to name, so it names itself.
+func exceptionType(err error) string {
+	for reflect.TypeOf(err) == fmtWrapErrorType {
+		unwrapped := errors.Unwrap(err)
+		if unwrapped == nil {
+			break
+		}
+		err = unwrapped
+	}
+	kind := reflect.TypeOf(err)
+	for kind != nil && kind.Kind() == reflect.Pointer {
+		kind = kind.Elem()
+	}
+	if kind == nil {
+		return ""
+	}
+	return kind.String()
+}
+
+// errorType classifies an error as one of a closed set, which every signal
+// names it by, so that a record, a span and a metric call one failure the one
+// thing. The set is closed so that a label cannot be blown up by whatever a
+// client sends, and each value is a condition with an answer of its own rather
+// than a family.
 func errorType(err error) string {
 	switch {
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
@@ -244,6 +310,30 @@ func errorType(err error) string {
 		return "timeout"
 	case errors.Is(err, net.ErrClosed):
 		return "closed"
+	// A peer that went away mid-stream, as against one that closed in order.
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE):
+		return "reset"
+	// Nothing is listening there, or nothing can be reached: a backend that is
+	// down against a route that is.
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "refused"
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return "unreachable"
+	// The address sshmux was asked to listen on is somebody else's.
+	case errors.Is(err, syscall.EADDRINUSE):
+		return "in_use"
+	// Descriptors ran out, which is what an accept fails with under load.
+	case errors.Is(err, syscall.EMFILE), errors.Is(err, syscall.ENFILE):
+		return "exhausted"
+	// A file the configuration named: the file itself, or a host key.
+	case errors.Is(err, fs.ErrNotExist):
+		return "not_found"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns"
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
