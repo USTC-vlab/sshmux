@@ -378,7 +378,7 @@ The kinds are also what a collector builds a service graph from: `sshmux` serves
 
 The session span ends once the session is established, not when it closes: a session stays up for as long as the client is connected, and a span left open that long is never exported. How long a session lived is reported by `sshmux.session.duration` instead.
 
-An attribute is left off while its value is unknown, rather than recorded as `unknown` the way the metrics do. A span whose step failed records the error and is marked with an error status.
+An attribute is left off while its value is unknown, rather than recorded as `unknown` the way the metrics do. A span whose step failed names `error.type` beside an error status carrying what the error said.
 
 Requests to the auth API carry the `authenticate user` span as a W3C `traceparent` header, so an auth server that is itself instrumented continues the same trace. Set `tracer.propagation` to `false` to stop sending it.
 

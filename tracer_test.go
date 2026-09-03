@@ -5,12 +5,14 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -220,6 +222,57 @@ func TestAuthMethodSpanAttributes(t *testing.T) {
 	// A session that authenticated on neither side names neither.
 	if attrs := tracer.authMethodSpanAttributes(connectionInfo{}); len(attrs) != 0 {
 		t.Errorf("attrs = %v, want nothing where nothing authenticated", attrs)
+	}
+}
+
+// TestEndSpanNamesTheErrorClass covers how a failed span says so: the class of
+// the error as an attribute and what it said as the status, and no exception
+// event, which the conventions ask for the attribute in place of.
+func TestEndSpanNamesTheErrorClass(t *testing.T) {
+	tracer, err := makeTracer(TracerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	_, span := provider.Tracer("test").Start(context.Background(), "test")
+	tracer.endSpan(span, os.ErrDeadlineExceeded)
+
+	recorded := recorder.Ended()
+	if len(recorded) != 1 {
+		t.Fatalf("%d spans were recorded, want 1", len(recorded))
+	}
+	var class string
+	for _, attr := range recorded[0].Attributes() {
+		if attr.Key == "error.type" {
+			class = attr.Value.AsString()
+		}
+	}
+	if class != "timeout" {
+		t.Errorf("error.type = %q, want the class the metrics and the records use", class)
+	}
+	if status := recorded[0].Status(); status.Code != codes.Error || status.Description != os.ErrDeadlineExceeded.Error() {
+		t.Errorf("status = %v, want the error and what it said", status)
+	}
+	// RecordError would leave one, naming the type and the message over again.
+	for _, event := range recorded[0].Events() {
+		t.Errorf("the span recorded a %q event, want the attribute in its place", event.Name)
+	}
+
+	// A span that succeeded names no class and keeps the unset status.
+	_, ok := provider.Tracer("test").Start(context.Background(), "ok")
+	tracer.endSpan(ok, nil)
+	recorded = recorder.Ended()
+	if len(recorded) != 2 {
+		t.Fatalf("%d spans were recorded, want 2", len(recorded))
+	}
+	for _, attr := range recorded[1].Attributes() {
+		if attr.Key == "error.type" {
+			t.Errorf("error.type = %v on a span that did not fail", attr.Value.AsString())
+		}
+	}
+	if code := recorded[1].Status().Code; code != codes.Unset {
+		t.Errorf("status = %v, want it left unset", code)
 	}
 }
 

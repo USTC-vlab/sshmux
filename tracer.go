@@ -145,15 +145,23 @@ var (
 	spanKindClient = trace.WithSpanKind(trace.SpanKindClient)
 )
 
-// endSpan records the outcome of a span and ends it. Attributes are only built
-// for a span that is actually recording.
-func endSpan(span trace.Span, err error, attrs ...attribute.KeyValue) {
+// endSpan records the outcome of a span and ends it. A span that failed says so
+// with its status, which carries what the error said, and with error.type,
+// which names the class every other signal groups a failure by.
+//
+// It records no exception event. RecordError writes one naming the type the
+// error was and the text it gave, which says nothing of the class and repeats
+// what the status already carries, and the conventions ask for the attribute
+// in its place.
+//
+// Attributes are only built for a span that is actually recording.
+func (t *Tracer) endSpan(span trace.Span, err error, attrs ...attribute.KeyValue) {
 	if span.IsRecording() {
-		setSpanAttributes(span, attrs)
 		if err != nil {
-			span.RecordError(err)
+			attrs = append(attrs, t.attrs.errorType.String(errorType(err)))
 			span.SetStatus(codes.Error, err.Error())
 		}
+		setSpanAttributes(span, attrs)
 	}
 	span.End()
 }
