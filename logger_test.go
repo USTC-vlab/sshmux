@@ -624,8 +624,6 @@ func TestLogRecordLegacyShape(t *testing.T) {
 	}
 }
 
-// TestLogRecordUnestablished checks the record a connection that never
-// authenticated produces: an outcome, but no user or server.
 // TestLogRecordErrorType covers a session that never started, which the record
 // classifies the same way the metrics classify it.
 func TestLogRecordErrorType(t *testing.T) {
@@ -856,6 +854,8 @@ func TestLegacyShapeIgnoresTheSockets(t *testing.T) {
 	}
 }
 
+// TestLogRecordUnestablished checks the record a connection that never
+// authenticated produces: an outcome, but no user or server.
 func TestLogRecordUnestablished(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeECS)
 	connect := time.Unix(1700000000, 0)
@@ -876,7 +876,7 @@ func TestLogRecordUnestablished(t *testing.T) {
 	}
 }
 
-// TestLogRecordLegacyUnestablished checks the legacy record of a connection
+// TestLegacyShapeUnestablished checks the legacy record of a connection
 // that never started, which the old code never wrote at all.
 func TestLegacyShapeUnestablished(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeLegacy)
@@ -895,8 +895,10 @@ func TestLegacyShapeUnestablished(t *testing.T) {
 	}
 }
 
-// TestLoggerSinkConventions checks that each sink resolves its own convention,
-// falling back to the group's where it names none.
+// TestLegacyShapeIsFrozen checks that the shape takes no field it was not
+// defined with: an attribute it has no name for is left out rather than
+// carried through, and a record that is not a session is given none of a
+// session's fields.
 func TestLegacyShapeIsFrozen(t *testing.T) {
 	logger, records := loggerWithShape(t, AttributeConventionDefault, LogRecordShapeLegacy)
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "listening",

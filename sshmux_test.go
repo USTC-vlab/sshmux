@@ -935,7 +935,6 @@ func awaitSpans(t *testing.T, sshmux *Server, spans func() []*tracev1.Span, want
 	return exported
 }
 
-// spanHasAttribute reports whether a span carries key.
 // spanNames reports the names of spans, for a failed assertion to show.
 func spanNames(spans []*tracev1.Span) []string {
 	names := make([]string, 0, len(spans))
@@ -945,6 +944,7 @@ func spanNames(spans []*tracev1.Span) []string {
 	return names
 }
 
+// spanHasAttribute reports whether a span carries key.
 func spanHasAttribute(span *tracev1.Span, key string) bool {
 	for _, attr := range span.Attributes {
 		if attr.Key == key {
