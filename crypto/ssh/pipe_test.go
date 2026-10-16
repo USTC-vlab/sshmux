@@ -5,9 +5,105 @@
 package ssh
 
 import (
+	"bytes"
+	"crypto/rand"
+	"errors"
 	"io"
 	"testing"
 )
+
+type authPacketTransport struct {
+	connTransport
+	scriptedPacketConn
+	writeErr error
+}
+
+func (c *authPacketTransport) Close() error { return nil }
+
+func (c *authPacketTransport) readPacket() ([]byte, error) {
+	return c.scriptedPacketConn.readPacket()
+}
+
+func (c *authPacketTransport) writePacket(packet []byte) error {
+	if c.writeErr != nil {
+		return c.writeErr
+	}
+	return c.scriptedPacketConn.writePacket(packet)
+}
+
+func TestDownstreamPublicKeyQuery(t *testing.T) {
+	rsaCert := &Certificate{
+		Key: testPublicKeys["rsa"], CertType: UserCert,
+		ValidBefore: CertTimeInfinity,
+	}
+	if err := rsaCert.SignCert(rand.Reader, testSigners["rsa"]); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		algo string
+		key  PublicKey
+	}{
+		{KeyAlgoRSA, testPublicKeys["rsa"]},
+		{KeyAlgoRSASHA256, testPublicKeys["rsa"]},
+		{KeyAlgoRSASHA512, testPublicKeys["rsa"]},
+		{CertAlgoRSAv01, rsaCert},
+		{CertAlgoRSASHA256v01, rsaCert},
+		{CertAlgoRSASHA512v01, rsaCert},
+		{KeyAlgoED25519, testPublicKeys["ed25519"]},
+		{KeyAlgoECDSA256, testPublicKeys["ecdsa"]},
+	} {
+		t.Run(tt.algo, func(t *testing.T) {
+			keyBlob := tt.key.Marshal()
+			query := Marshal(&publickeyAuthMsg{
+				User: "test", Service: serviceSSH, Method: "publickey",
+				Algoname: tt.algo, PubKey: keyBlob,
+			})
+			for _, skipQuery := range []bool{false, true} {
+				transport := &authPacketTransport{scriptedPacketConn: scriptedPacketConn{
+					reads: [][]byte{query, Marshal(&userAuthRequestMsg{
+						User: "test", Service: serviceSSH, Method: "none",
+					})},
+				}}
+				downstream := &Downstream{connection: &connection{transport: transport}}
+				req, err := downstream.ReadAuthRequest(skipQuery)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !skipQuery {
+					if !req.IsPublicKeyQuery || len(transport.writes) != 0 {
+						t.Fatal("query should be returned without a reply")
+					}
+					continue
+				}
+				if req.Method != "none" || len(transport.writes) != 1 {
+					t.Fatalf("method = %q, replies = %d", req.Method, len(transport.writes))
+				}
+				var reply userAuthPubKeyOkMsg
+				if err := Unmarshal(transport.writes[0], &reply); err != nil {
+					t.Fatal(err)
+				}
+				if reply.Algo != tt.algo || !bytes.Equal(reply.PubKey, keyBlob) {
+					t.Fatalf("PK_OK did not echo query: algorithm = %q, want %q", reply.Algo, tt.algo)
+				}
+			}
+		})
+	}
+}
+
+func TestDownstreamPublicKeyQueryWriteError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	transport := &authPacketTransport{
+		scriptedPacketConn: scriptedPacketConn{reads: [][]byte{Marshal(&publickeyAuthMsg{
+			User: "test", Service: serviceSSH, Method: "publickey",
+			Algoname: KeyAlgoRSASHA512, PubKey: testPublicKeys["rsa"].Marshal(),
+		})}},
+		writeErr: wantErr,
+	}
+	downstream := &Downstream{connection: &connection{transport: transport}}
+	if _, err := downstream.ReadAuthRequest(true); !errors.Is(err, wantErr) {
+		t.Fatalf("ReadAuthRequest error = %v, want %v", err, wantErr)
+	}
+}
 
 type scriptedPacketConn struct {
 	reads  [][]byte

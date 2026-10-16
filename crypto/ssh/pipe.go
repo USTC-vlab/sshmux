@@ -174,7 +174,9 @@ func (s *Downstream) ReadAuthRequest(skipQuery bool) (*AuthRequest, error) {
 					return nil, err
 				}
 			} else if skipQuery {
-				s.AckPublicKey(pubKey)
+				if err := s.AckPublicKey(algo, pubKeyData); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			return &AuthRequest{
@@ -203,10 +205,12 @@ func (s *Downstream) ReadAuthRequest(skipQuery bool) (*AuthRequest, error) {
 	}
 }
 
-func (s *Downstream) AckPublicKey(key PublicKey) error {
+// AckPublicKey echoes the algorithm and key blob from a public key query,
+// as required by RFC 4252, section 7. The algorithm may differ from key.Type().
+func (s *Downstream) AckPublicKey(algo string, pubKeyData []byte) error {
 	return s.transport.writePacket(Marshal(&userAuthPubKeyOkMsg{
-		Algo:   key.Type(),
-		PubKey: key.Marshal(),
+		Algo:   algo,
+		PubKey: pubKeyData,
 	}))
 }
 
